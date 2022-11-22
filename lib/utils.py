@@ -15,6 +15,7 @@ from rasterio.windows import Window
 import os
 from pyproj.crs import CRS
 
+
 class Chipset:
     def __init__(self, basedir, rio_dataset_list, idfile='metadata.pkl'):
 
