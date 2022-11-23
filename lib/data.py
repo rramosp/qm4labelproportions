@@ -435,14 +435,53 @@ class S2LandcoverDataGenerator(tf.keras.utils.Sequence):
     """
     from https://stanford.edu/~shervine/blog/keras-how-to-generate-data-on-the-fly
     """
-    def __init__(self, basedir, partitions_id='5k', batch_size=32, shuffle=True):
+    @classmethod
+    def split(cls, basedir, train_size=0.7, test_size=0.3, val_size=0.0, cache_size=1000, **kwargs):
+        assert np.abs(train_size + test_size + val_size - 1) < 1e-7
+        assert not 'cache_size' in kwargs.keys()
+        assert not 'chips_basedirs' in kwargs.keys()
+
+        np.random.seed(10)
+        chips_basedirs = np.r_[[f for f,subdirs,files in os.walk(basedir) if 'metadata.pkl' in files]]
+        permutation = np.random.permutation(len(chips_basedirs))
+        i1 = int(len(permutation)*train_size)
+        i2 = int(len(permutation)*(train_size+test_size))
+
+        # split the chips
+        tr =  chips_basedirs[permutation[:i1]]
+        ts =  chips_basedirs[permutation[i1:i2]]
+        val = chips_basedirs[permutation[i2:]]
+
+        # split also the cache sizes
+        tr_cache_size = int(cache_size * train_size)
+        ts_cache_size = int(cache_size * test_size)
+        val_cache_size = cache_size - tr_cache_size - ts_cache_size
+
+        tr = cls(basedir=basedir, chips_basedirs = tr, cache_size=tr_cache_size, **kwargs)
+        ts = cls(basedir=basedir, chips_basedirs = ts, cache_size=ts_cache_size, **kwargs)
+        val = cls(basedir=basedir, chips_basedirs = val, cache_size=val_cache_size, **kwargs)
+
+        return tr, ts, val
+            
+    def __init__(self, basedir, 
+                 partitions_id='5k', 
+                 batch_size=32, 
+                 shuffle=True,
+                 cache_size=100,
+                 chips_basedirs=None
+                 ):
         self.basedir = basedir
-        self.chips_basedirs = [f for f,subdirs,files in os.walk(basedir) if 'metadata.pkl' in files]
+        if chips_basedirs is None:
+            self.chips_basedirs = [f for f,subdirs,files in os.walk(basedir) if 'metadata.pkl' in files]
+        else:
+            self.chips_basedirs = chips_basedirs    
         self.batch_size = batch_size
         self.shuffle = shuffle
         self.partitions_id = partitions_id
         self.on_epoch_end()
-        print (f"got {len(self.chips_basedirs)} chips")
+        self.cache = {}
+        self.cache_size = cache_size
+        print (f"got {len(self.chips_basedirs):6d} chips. cache size is {self.cache_size}")
 
     def __len__(self):
         'Denotes the number of batches per epoch'
@@ -467,25 +506,35 @@ class S2LandcoverDataGenerator(tf.keras.utils.Sequence):
 
         return x
 
-    def __data_generation(self, chips_basedirs_temp):
-        'Generates data containing batch_size samples' # X : (n_samples, *dim, n_channels)
-        # Initialization
-        X = np.empty((self.batch_size, 100, 100, 3), dtype=np.float32)
-        label = np.empty((self.batch_size, 100, 100), dtype=np.int16)
-        partition_proportions = np.empty((self.batch_size, 12), dtype=np.float32)
-
-        # Generate data
-        for i, ID in enumerate(chips_basedirs_temp):
-            # Store sample
-            chip = Chip(ID)
+    def load_chip(self, chip_id):
+        if chip_id in self.cache.keys():
+            return self.cache[chip_id]
+        else:
+            chip = Chip(chip_id)
             chip.load_chipmean()
             chip.load_label()
             chip.load_label_proportions(self.partitions_id)
             p = chip.label_proportions[f'partitions{self.partitions_id}']
             p = np.r_[[p[str(i)] if str(i) in p.keys() else 0 for i in range(12)]]    
-            
-            X[i,] = chip.chip_mean/256
-            label[i,] = chip.label
+
+            r = [chip.chip_mean, chip.label, p]
+            if len(self.cache) < self.cache_size:
+                self.cache[chip_id] = r
+            return r
+
+    def __data_generation(self, chips_basedirs_temp):
+        'Generates data containing batch_size samples' # X : (n_samples, *dim, n_channels)
+        # Initialization
+        X = np.empty((self.batch_size, 100, 100, 3), dtype=np.float32)
+        labels = np.empty((self.batch_size, 100, 100), dtype=np.int16)
+        partition_proportions = np.empty((self.batch_size, 12), dtype=np.float32)
+
+        # Generate data
+        for i, chip_id in enumerate(chips_basedirs_temp):
+            # Store sample
+            chip_mean, label, p = self.load_chip(chip_id)
+            X[i,] = chip_mean/256
+            labels[i,] = label
             partition_proportions[i,] = p
 
-        return X, partition_proportions, label
+        return X, partition_proportions, labels
