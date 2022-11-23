@@ -14,7 +14,12 @@ import geopandas as gpd
 from rasterio.windows import Window
 import os
 from pyproj.crs import CRS
+import matplotlib
+import pandas as pd
+import tensorflow as tf
 
+lc = {'0': 'none', '1': 'water', '2': 'trees', '3': 'not used', '4': 'flooded vegetation', '5': 'crops',
+      '6': 'not used', '7': 'built area', '8': 'bare ground', '9': 'snow/ice', '10': 'clouds', '11': 'rangeland'}
 
 class Chipset:
     def __init__(self, basedir, rio_dataset_list, idfile='metadata.pkl'):
@@ -92,10 +97,17 @@ class Chipset:
         for c in pbar(self, max_value=len(self.files)):
             c.remove_chipnpz()
 
+    def load_all_partitions(self):
+        self.all_partitions = {i: gpd.read_file(f"{self.basedir}/partitions{i}_with_label_proportions.geojson") for i in ['5k', '10k', '20k', '50k']}
+        self.all_chips_partitions = {i: gpd.read_file(f"{self.basedir}/chips_partitions{i}.geojson") for i in ['5k', '10k', '20k', '50k']}
+
+
 class Chip:
     
-    def __init__(self, basedir, crs, threshold=1500):
+    def __init__(self, basedir, crs=None, threshold=1500):        
         self.crs = crs
+        if self.crs is None:
+            self.crs = CRS.from_epsg(4326)
         self.basedir = basedir
         with open(f"{basedir}/metadata.pkl", "rb") as f:
             self.metadata = pickle.load(f)
@@ -108,6 +120,9 @@ class Chip:
         self.chip = None
         self.labelfile = f"{self.basedir}/label.npz"
         self.threshold = threshold
+
+    def getfiles(self):
+        return [i.decode() if type(i)==bytes else i for i in os.listdir(self.basedir)]        
 
     def has_chip(self):
         return os.path.isfile(self.chipfile)
@@ -137,18 +152,25 @@ class Chip:
         self.chip=c
         
     def load_chipmean(self):
-        self.chip_mean = np.load(self.meanfile)['arr_0']
+        if not 'chip_mean' in dir(self) or self.chip_mean is None:
+            self.chip_mean = np.load(self.meanfile)['arr_0']
 
     def load_label(self):
-        self.label = np.load(self.labelfile)['arr_0']
+        if not 'label' in dir(self) or self.label is None:
+            self.label = np.load(self.labelfile)['arr_0']
+        return self.label
 
-    def load_label_proportions(self):
-        files = [i.decode() for i in os.listdir(self.basedir) if i.decode().startswith('label_proportions_')]
+    def load_label_proportions(self, partitions_id=None):
+        if partitions_id is None:
+            files = [i for i in self.getfiles() if i.startswith('label_proportions_')]
+        else:
+            files = [f"label_proportions_partitions{partitions_id}.pkl"]
         r = {}
         for file in files:
             with open(f'{self.basedir}/{file}', 'rb') as f:
                 k = file.split(".")[-2][18:]
                 r[k] = pickle.load(f)
+        self.label_proportions = r
         return r        
 
     def generate_adjusted_mean(self):
@@ -200,6 +222,11 @@ class Chip:
         with open(f"{self.basedir}/label_proportions_{prefix}.pkl", "bw") as f:
             pickle.dump(label_distrib,f)   
             
+    def compute_label_proportions_on_chip_label(self):
+        self.load_label()
+        l = pd.Series(self.label.flatten()).value_counts() / 100**2
+        return {i: (l[i] if i in l.index else 0) for i in range(12)}
+
     def generate_all(self, rio_dataset_list=None, partitions=None, prefix=None):
         if not 'chip' in dir(self):
             self.load_chip()
@@ -209,7 +236,40 @@ class Chip:
         if partitions is not None and prefix is not None:
             self.generate_label_proportions(partitions, prefix)
             
-        
+    def load_and_plot(self):
+
+        self.load_chipmean()
+
+        self.load_label()
+
+        self.load_label_proportions()
+
+        for ax,i in subplots(4, usizex=5, usizey=4):
+            if i==0: 
+                plt.imshow(self.chip_mean)
+                plt.title("/".join(self.basedir.split("/")[-2:]))
+            if i==1:
+                cmap=matplotlib.colors.ListedColormap([plt.cm.tab20(i) for i in range(12)])
+
+                plt.imshow(self.label, vmin=0, vmax=11, cmap=cmap, interpolation='none')
+                plt.title("label")
+                cbar = plt.colorbar(ax=ax, ticks=range(12))
+                cbar.ax.set_yticklabels([f"{k} {v}" for k,v in lc.items()])  # vertically oriented colorbar
+
+            if i==2:
+                k = pd.DataFrame(self.label_proportions).T
+                k = k[[str(i) for i in range(12) if str(i) in k.columns]]
+                k.T.plot(kind='bar', ax=ax, cmap=plt.cm.viridis)
+                plt.title("label proportions at\ndifferent partition sizes")
+                plt.ylim(0,1); plt.grid();
+            if i==3:
+                l = pd.Series(self.label.flatten()).value_counts() / 100**2
+                p = self.compute_label_proportions_on_chip_label()
+                plt.bar(range(12), [p[i] for i in range(12)])
+                plt.ylim(0,1); plt.grid()
+                plt.title("label proportions on chip")
+        return self
+
     def rgb(self):
         if self.has_chip():
             self.load_chip()
@@ -369,3 +429,63 @@ def katana(geometry, threshold, count=0, random_variance=0.1):
         else:
             final_result.append(g)
     return final_result
+
+
+class S2LandcoverDataGenerator(tf.keras.utils.Sequence):
+    """
+    from https://stanford.edu/~shervine/blog/keras-how-to-generate-data-on-the-fly
+    """
+    def __init__(self, basedir, partitions_id='5k', batch_size=32, shuffle=True):
+        self.basedir = basedir
+        self.chips_basedirs = [f for f,subdirs,files in os.walk(basedir) if 'metadata.pkl' in files]
+        self.batch_size = batch_size
+        self.shuffle = shuffle
+        self.partitions_id = partitions_id
+        self.on_epoch_end()
+        print (f"got {len(self.chips_basedirs)} chips")
+
+    def __len__(self):
+        'Denotes the number of batches per epoch'
+        return int(np.floor(len(self.chips_basedirs) / self.batch_size))
+
+    def on_epoch_end(self):
+        'Updates indexes after each epoch'
+        self.indexes = np.arange(len(self.chips_basedirs))
+        if self.shuffle == True:
+            np.random.shuffle(self.indexes)
+
+    def __getitem__(self, index):
+        'Generate one batch of data'
+        # Generate indexes of the batch
+        indexes = self.indexes[index*self.batch_size:(index+1)*self.batch_size]
+
+        # Find list of IDs
+        chips_basedirs_temp = [self.chips_basedirs[k] for k in indexes]
+
+        # Generate data
+        x = self.__data_generation(chips_basedirs_temp)
+
+        return x
+
+    def __data_generation(self, chips_basedirs_temp):
+        'Generates data containing batch_size samples' # X : (n_samples, *dim, n_channels)
+        # Initialization
+        X = np.empty((self.batch_size, 100, 100, 3), dtype=np.float32)
+        label = np.empty((self.batch_size, 100, 100), dtype=np.int16)
+        partition_proportions = np.empty((self.batch_size, 12), dtype=np.float32)
+
+        # Generate data
+        for i, ID in enumerate(chips_basedirs_temp):
+            # Store sample
+            chip = Chip(ID)
+            chip.load_chipmean()
+            chip.load_label()
+            chip.load_label_proportions(self.partitions_id)
+            p = chip.label_proportions[f'partitions{self.partitions_id}']
+            p = np.r_[[p[str(i)] if str(i) in p.keys() else 0 for i in range(12)]]    
+            
+            X[i,] = chip.chip_mean/256
+            label[i,] = chip.label
+            partition_proportions[i,] = p
+
+        return X, partition_proportions, label
