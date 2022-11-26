@@ -51,7 +51,7 @@ class Chip:
 
     def plot(self):
 
-        for ax,i in subplots(4, usizex=5, usizey=4):
+        for ax,i in subplots(3, usizex=5, usizey=3.5):
             if i==0: 
                 plt.imshow(self.chipmean)
                 plt.title("/".join(self.filename.split("/")[-1:]))
@@ -62,19 +62,14 @@ class Chip:
                 plt.title("label")
                 cbar = plt.colorbar(ax=ax, ticks=range(12))
                 cbar.ax.set_yticklabels([f"{k} {v}" for k,v in lc.items()])  # vertically oriented colorbar
-
             if i==2:
                 k = pd.DataFrame(self.label_proportions).T
                 k = k[[str(i) for i in range(12) if str(i) in k.columns]]
-                k.T.plot(kind='bar', ax=ax, cmap=plt.cm.viridis)
+                k.T.plot(kind='bar', ax=ax, cmap=plt.cm.brg)
                 plt.title("label proportions at\ndifferent partition sizes")
                 plt.ylim(0,1); plt.grid();
-            if i==3:
-                l = pd.Series(self.label.flatten()).value_counts() / 100**2
-                p = self.compute_label_proportions_on_chip_label()
-                plt.bar(range(12), [p[i] for i in range(12)])
-                plt.ylim(0,1); plt.grid()
-                plt.title("label proportions on chip")   
+                plt.legend(loc='center left', bbox_to_anchor=(1, 0.5))
+
         return self
 
 
@@ -186,4 +181,4 @@ class S2LandcoverDataGenerator(tf.keras.utils.Sequence):
             labels[i,] = label
             partition_proportions[i,] = p
 
-        return X, partition_proportions, labels
+        return X, (partition_proportions, labels)
