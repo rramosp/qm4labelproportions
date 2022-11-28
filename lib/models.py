@@ -9,6 +9,7 @@ import matplotlib.pyplot as plt
 import wandb
 from . import data
 from rlxutils import subplots
+import segmentation_models as sm
 
 def get_iou(class_number, y_true, y_pred):
     """
