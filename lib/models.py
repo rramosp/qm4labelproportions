@@ -233,9 +233,9 @@ class SMUnetSegmentation(GenericUnet):
 
     def __init__(self, **sm_keywords):
         self.sm_keywords = sm_keywords
+        self.backbone = self.sm_keywords['backbone_name']
 
     def get_model(self):
-        self.backbone = self.sm_keywords['backbone_name']
         m = model = sm.Unet(input_shape=(None,None,3), 
                             activation='sigmoid',
                             **self.sm_keywords)
