@@ -10,6 +10,21 @@ import wandb
 from . import data
 from rlxutils import subplots
 
+def get_iou(class_number, y_true, y_pred):
+    """
+    assumes y_true/y_pred contain a batch of size (batch_size, other_dims)
+    returns a list of ious of size batch_size
+    """
+    iou_batch = []
+    cy_pred = (y_pred == class_number).astype(int)
+    cy_true = (y_true == class_number).astype(int)
+    for i in range(len(cy_pred)):
+        union        = ((cy_true[i]+cy_pred[i])>=1).sum()
+        intersection = ((cy_true[i]+cy_pred[i])==2).sum()
+        iou = 1 if union==0 else intersection/union
+        iou_batch.append(iou)
+    return np.r_[iou_batch]
+
 class GenericUnet:
 
     def normitem(self, x,l):
@@ -63,31 +78,43 @@ class GenericUnet:
         print ()
         return self
 
-    def plot_val_sample(self, n=10):
+    def get_val_sample(self, n=10):
         batch_size_backup = self.val.batch_size
         self.val.batch_size = n
         self.val.on_epoch_end()
         gen_val = iter(self.val) 
         val_x, (val_p, val_l) = gen_val.__next__()
         val_x,val_l = self.normitem(val_x,val_l)
-        val_out = self.predict(val_x)
+        val_out = self.predict(val_x).numpy()
 
+        # restore val dataset config
+        self.val.batch_size = batch_size_backup
+        self.val.on_epoch_end()
+        return val_x, val_p, val_l, val_out
 
+    def plot_val_sample(self, n=10):
+        val_x, val_p, val_l, val_out = self.get_val_sample()
+        tval_out = (val_out>0.5).astype(int)
 
+        ious = np.r_[[get_iou(class_number=i, y_true=val_l, y_pred=tval_out) for i in range(2)]].mean(axis=0)
         for ax,i in subplots(len(val_x)):
             plt.imshow(val_x[i])        
+            if i==0: plt.ylabel("input rgb")
 
         for ax,i in subplots(len(val_l)):
             plt.imshow(val_l[i])
+            if i==0: plt.ylabel("labels")
 
         for ax,i in subplots(len(val_out)):
-            plt.imshow(val_out[i]>0.5)
+            plt.imshow(tval_out[i])
+            plt.title(f"iou {ious[i]:.2f}")
+            if i==0: plt.ylabel("thresholded output")
 
         for ax,i in subplots(len(val_out)):
             plt.imshow(val_out[i])
+            if i==0: plt.ylabel("unthreshold output")
 
-        self.val.batch_size = batch_size_backup
-        self.val.on_epoch_end()
+        return val_x, val_p, val_l, val_out
 
     def get_name(self):
         raise NotImplementedError()
@@ -199,3 +226,24 @@ class CustomUnetSegmentation(GenericUnet):
         model = Model(inputs=[inputs], outputs=[outputs])
         
         return model
+
+
+class SMUnetSegmentation(GenericUnet):
+
+    def __init__(self, **sm_keywords):
+        self.sm_keywords = sm_keywords
+
+    def get_model(self):
+        self.backbone = self.sm_keywords['backbone_name']
+        m = model = sm.Unet(input_shape=(None,None,3), 
+                            activation='sigmoid',
+                            **self.sm_keywords)
+        
+        return m
+
+    def get_loss(self, yhat, p, l):
+        return tf.reduce_mean( (l-yhat)**2)
+
+    def get_name(self):
+        return f"{self.backbone}_unet"
+
