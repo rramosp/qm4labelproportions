@@ -40,14 +40,16 @@ class GenericUnet:
                  train_size=.7, 
                  val_size=0.2, 
                  test_size=0.1,
+                 loss='mse',
                  wandb_project = 'qm4labelproportions',
                  wandb_entity = 'rramosp'):
         self.learning_rate = learning_rate
-
+        self.loss_name = loss
         self.run_name = f"{self.get_name()}-{datetime.now().strftime('%Y%m%d[%H%M]')}"
 
         self.model = self.get_model()
         self.opt = tf.keras.optimizers.Adam(learning_rate = self.learning_rate)
+        self.dice_loss = sm.losses.DiceLoss()
 
         trainable_params = sum(count_params(layer) for layer in self.model.trainable_weights)
         non_trainable_params = sum(count_params(layer) for layer in self.model.non_trainable_weights)
@@ -134,6 +136,10 @@ class GenericUnet:
         raise NotImplementedError()
 
     def get_loss(self, yhat, p, l):
+        if self.loss_name == 'mse':
+          return tf.reduce_mean( (l-yhat)**2)
+        elif self.loss_name == 'dice':
+          return self.dice(l, yhat)
         raise NotImplementedError()
 
     def predict(self, x):
@@ -185,9 +191,6 @@ class GenericUnet:
                 wandb.log({"val/iou": val_iou})
 
 class CustomUnetSegmentation(GenericUnet):
-
-    def get_loss(self, yhat, p, l):
-        return tf.reduce_mean( (l-yhat)**2)
 
     def get_name(self):
         return "custom_unet"
@@ -269,9 +272,6 @@ class SMUnetSegmentation(GenericUnet):
         out = tf.keras.layers.Conv2D(1, (1,1), padding='same', activation='sigmoid')(out)
         m = tf.keras.models.Model([inp], [out])
         return m
-
-    def get_loss(self, yhat, p, l):
-        return tf.reduce_mean( (l-yhat)**2)
 
     def get_name(self):
         return f"{self.backbone}_unet"
