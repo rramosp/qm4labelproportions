@@ -68,7 +68,9 @@ class GenericUnet:
                 cache_size = 10000,
                 shuffle = True                                             
             )
-        
+
+        self.iou_metric = tf.keras.metrics.MeanIoU(num_classes=2)
+
         wconfig = {
             "learning_rate": self.opt.learning_rate,
             "batch_size": self.tr.batch_size,
@@ -97,7 +99,15 @@ class GenericUnet:
         val_x, val_p, val_l, val_out = self.get_val_sample()
         tval_out = (val_out>0.5).astype(int)
 
-        ious = np.r_[[get_iou(class_number=i, y_true=val_l, y_pred=tval_out) for i in range(2)]].mean(axis=0)
+        ious = []
+        y_true = val_l
+        y_pred = tval_out
+        for i in range(len(y_true)):
+            self.iou_metric.reset_state()
+            self.iou_metric.update_state(y_true[i:i+1], y_pred[i:i+1])
+            ious.append(self.iou_metric.result().numpy())
+
+        #ious = np.r_[[get_iou(class_number=i, y_true=val_l, y_pred=tval_out) for i in range(2)]].mean(axis=0)
         for ax,i in subplots(len(val_x)):
             plt.imshow(val_x[i])        
             if i==0: plt.ylabel("input rgb")
@@ -146,7 +156,14 @@ class GenericUnet:
 
                 grads = t.gradient(loss, self.model.trainable_variables)
                 self.opt.apply_gradients(zip(grads, self.model.trainable_variables))
+
+                tr_y_pred = tf.cast(out>0.5, dtype=tf.int32)
+                tr_iou = self.iou_metric(
+                            y_true = l, 
+                            y_pred = tf.cast(out>0.5, dtype=tf.int32)
+                )
                 wandb.log({"train/loss": loss})
+                wandb.log({"train/iou": tr_iou})
 
                 try:
                     val_x, (val_p, val_l) = gen_val.__next__()
@@ -157,7 +174,15 @@ class GenericUnet:
                 val_x,val_l = self.normitem(val_x,val_l)
                 val_out = self.predict(val_x)
                 val_loss = self.get_loss(val_out,val_p,val_l)
+
+                val_y_pred = tf.cast(val_out>0.5, dtype=tf.int32)
+                val_iou = self.iou_metric(
+                            y_true = val_l, 
+                            y_pred = tf.cast(val_out>0.5, dtype=tf.int32)
+                )
+
                 wandb.log({"val/loss": val_loss})
+                wandb.log({"val/iou": val_iou})
 
 class CustomUnetSegmentation(GenericUnet):
 
@@ -236,10 +261,13 @@ class SMUnetSegmentation(GenericUnet):
         self.backbone = self.sm_keywords['backbone_name']
 
     def get_model(self):
-        m = model = sm.Unet(input_shape=(None,None,3), 
-                            activation='sigmoid',
-                            **self.sm_keywords)
-        
+        unet = model = sm.Unet(input_shape=(None,None,3), 
+                               **self.sm_keywords)
+
+        inp = tf.keras.layers.Input(shape=(None, None, 3))
+        out = unet(inp)
+        out = tf.keras.layers.Conv2D(1, (1,1), padding='same', activation='sigmoid')(out)
+        m = tf.keras.models.Model([inp], [out])
         return m
 
     def get_loss(self, yhat, p, l):
