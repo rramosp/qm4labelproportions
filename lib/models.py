@@ -52,9 +52,6 @@ class GenericUnet:
         self.dice_loss = sm.losses.DiceLoss()
         self.bince_loss = tf.keras.losses.BinaryCrossentropy()
 
-        trainable_params = sum(count_params(layer) for layer in self.model.trainable_weights)
-        non_trainable_params = sum(count_params(layer) for layer in self.model.non_trainable_weights)
-
         self.train_size = train_size
         self.val_size   = val_size
         self.test_size  = test_size
@@ -74,15 +71,22 @@ class GenericUnet:
 
         self.iou_metric = tf.keras.metrics.MeanIoU(num_classes=2)
 
-        wconfig = {
-            "learning_rate": self.opt.learning_rate,
-            "batch_size": self.tr.batch_size,
-            'trainable_params': trainable_params,
-            'non_trainable_params': non_trainable_params
-        }
+        wconfig = self.get_wandb_config()
         wandb.init(project=wandb_project, entity=wandb_entity, name=self.run_name, tags=['segmentation'], config=wconfig)
         print ()
         return self
+
+    def get_wandb_config(self):
+        self.trainable_params = sum(count_params(layer) for layer in self.model.trainable_weights)
+        self.non_trainable_params = sum(count_params(layer) for layer in self.model.non_trainable_weights)
+        wconfig = {
+            "learning_rate": self.opt.learning_rate,
+            "batch_size": self.tr.batch_size,
+            'trainable_params': self.trainable_params,
+            'non_trainable_params': self.non_trainable_params,
+            'loss': self.loss_name
+        }
+        return wconfig
 
     def get_val_sample(self, n=10):
         batch_size_backup = self.val.batch_size
@@ -266,6 +270,11 @@ class SMUnetSegmentation(GenericUnet):
     def __init__(self, **sm_keywords):
         self.sm_keywords = sm_keywords
         self.backbone = self.sm_keywords['backbone_name']
+
+    def get_wandb_config(self):
+      w = super().get_wandb_config()
+      w.update(self.sm_keywords)
+      return w
 
     def get_model(self):
         unet = model = sm.Unet(input_shape=(None,None,3), 
