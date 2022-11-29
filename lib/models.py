@@ -50,6 +50,7 @@ class GenericUnet:
         self.model = self.get_model()
         self.opt = tf.keras.optimizers.Adam(learning_rate = self.learning_rate)
         self.dice_loss = sm.losses.DiceLoss()
+        self.bince_loss = tf.keras.losses.BinaryCrossentropy()
 
         trainable_params = sum(count_params(layer) for layer in self.model.trainable_weights)
         non_trainable_params = sum(count_params(layer) for layer in self.model.non_trainable_weights)
@@ -135,12 +136,15 @@ class GenericUnet:
     def get_model(self):
         raise NotImplementedError()
 
-    def get_loss(self, yhat, p, l):
+    def get_loss(self, out, p, l):
         if self.loss_name == 'mse':
-          return tf.reduce_mean( (l-yhat)**2)
+          return tf.reduce_mean( (l-out)**2)
         elif self.loss_name == 'dice':
-          return self.dice(l, yhat)
-        raise NotImplementedError()
+          out = tf.sigmoid(50*(out-0.5))
+          return self.dice_loss(l, out)
+        elif self.loss_name == 'bince':
+          return self.bince_loss(l, out)
+        raise ValueError(f"unkown loss '{self.loss_name}'")
 
     def predict(self, x):
         return self.model(x)[:,:,:,0]
