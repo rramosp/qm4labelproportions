@@ -42,11 +42,12 @@ class GenericUnet:
                  test_size=0.1,
                  loss='mse',
                  wandb_project = 'qm4labelproportions',
-                 wandb_entity = 'rramosp'):
+                 wandb_entity = 'rramosp',
+                 partitions_id = 'aschips'):
         self.learning_rate = learning_rate
         self.loss_name = loss
         self.run_name = f"{self.get_name()}-{datetime.now().strftime('%Y%m%d[%H%M]')}"
-
+        self.partitions_id = partitions_id
         self.model = self.get_model()
         self.opt = tf.keras.optimizers.Adam(learning_rate = self.learning_rate)
         self.dice_loss = sm.losses.DiceLoss()
@@ -60,7 +61,7 @@ class GenericUnet:
 
         self.tr, self.ts, self.val = data.S2LandcoverDataGenerator.split(
                 basedir = self.datadir,
-                partitions_id = 'aschips',
+                partitions_id = partitions_id,
                 batch_size = self.batch_size,
                 train_size = self.train_size,
                 test_size = self.test_size, 
@@ -148,6 +149,10 @@ class GenericUnet:
           return self.dice_loss(l, out)
         elif self.loss_name == 'bince':
           return self.bince_loss(l, out)
+        elif self.loss_name == 'mse_on_proportions':
+            out = tf.sigmoid(50*(out-0.5))
+            return tf.reduce_mean(
+                        (tf.reduce_mean(out, axis=[1,2]) - p[:,2])**2)
         raise ValueError(f"unkown loss '{self.loss_name}'")
 
     def predict(self, x):
