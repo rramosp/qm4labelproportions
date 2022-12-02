@@ -47,12 +47,12 @@ class GenericUnet:
                  partitions_id = 'aschips'):
         self.learning_rate = learning_rate
         self.loss_name = loss
-        self.run_name = f"{self.get_name()}-{datetime.now().strftime('%Y%m%d[%H%M]')}"
         self.partitions_id = partitions_id
+        self.run_name = f"{self.get_name()}-{self.partitions_id}-{self.loss_name}-{datetime.now().strftime('%Y%m%d[%H%M]')}"
         self.model = self.get_model()
         self.opt = tf.keras.optimizers.Adam(learning_rate = self.learning_rate)
         self.dice_loss = sm.losses.DiceLoss()
-        self.bince_loss = tf.keras.losses.BinaryCrossentropy()
+        self.binxe_loss = tf.keras.losses.BinaryCrossentropy()
 
         self.train_size = train_size
         self.val_size   = val_size
@@ -74,7 +74,8 @@ class GenericUnet:
         self.iou_metric = tf.keras.metrics.MeanIoU(num_classes=2)
 
         wconfig = self.get_wandb_config()
-        wandb.init(project=wandb_project, entity=wandb_entity, name=self.run_name, tags=['segmentation'], config=wconfig)
+        wandb.init(project=wandb_project, entity=wandb_entity, 
+                    name=self.run_name, config=wconfig)
         print ()
         return self
 
@@ -149,11 +150,15 @@ class GenericUnet:
           out = tf.sigmoid(50*(out-0.5))
           return self.dice_loss(l, out)
         elif self.loss_name == 'binxe':
-          return self.bince_loss(l, out)
+          return self.binxe_loss(l, out)
         elif self.loss_name == 'mse_on_proportions':
             out = tf.sigmoid(50*(out-0.5))
             return tf.reduce_mean(
                         (tf.reduce_mean(out, axis=[1,2]) - p[:,2])**2)
+        elif self.loss_name == 'binxe_on_proportions':
+            o = tf.sigmoid(50*(out-0.5))
+            return self.binxe_loss(p[:,2], tf.reduce_mean(o, axis=[1,2]))
+
         raise ValueError(f"unkown loss '{self.loss_name}'")
 
     def predict(self, x):
