@@ -10,6 +10,7 @@ import wandb
 from . import data
 from rlxutils import subplots
 import segmentation_models as sm
+import pandas as pd
 
 def get_iou(class_number, y_true, y_pred):
     """
@@ -147,7 +148,7 @@ class GenericUnet:
         elif self.loss_name == 'dice':
           out = tf.sigmoid(50*(out-0.5))
           return self.dice_loss(l, out)
-        elif self.loss_name == 'bince':
+        elif self.loss_name == 'binxe':
           return self.bince_loss(l, out)
         elif self.loss_name == 'mse_on_proportions':
             out = tf.sigmoid(50*(out-0.5))
@@ -163,7 +164,7 @@ class GenericUnet:
         gen_val = iter(self.val) 
         
         for epoch in range(epochs):
-            print ("\nepoch", epoch)
+            print ("\nepoch", epoch, flush=True)
             for x,(p,l) in pbar(self.tr):
                 # trim to unet input shape
                 x,l = self.normitem(x,l)
@@ -176,7 +177,7 @@ class GenericUnet:
                 grads = t.gradient(loss, self.model.trainable_variables)
                 self.opt.apply_gradients(zip(grads, self.model.trainable_variables))
 
-                tr_y_pred = tf.cast(out>0.5, dtype=tf.int32)
+                self.iou_metric.reset_states()
                 tr_iou = self.iou_metric(
                             y_true = l, 
                             y_pred = tf.cast(out>0.5, dtype=tf.int32)
@@ -194,7 +195,7 @@ class GenericUnet:
                 val_out = self.predict(val_x)
                 val_loss = self.get_loss(val_out,val_p,val_l)
 
-                val_y_pred = tf.cast(val_out>0.5, dtype=tf.int32)
+                self.iou_metric.reset_states()
                 val_iou = self.iou_metric(
                             y_true = val_l, 
                             y_pred = tf.cast(val_out>0.5, dtype=tf.int32)
@@ -202,6 +203,40 @@ class GenericUnet:
 
                 wandb.log({"val/loss": val_loss})
                 wandb.log({"val/iou": val_iou})
+
+    def summary_dataset(self, dataset_name):
+        assert dataset_name in ['train', 'val', 'test']
+
+        self.iou_metric.reset_states()
+        if dataset_name == 'train':
+            dataset = self.tr
+        elif dataset_name == 'val':
+            dataset = self.val
+        else:
+            dataset = self.ts
+
+        losses, ious = [], []
+        for x, (p,l) in pbar(dataset):
+            x,l = self.normitem(x,l)
+            out = self.predict(x)
+            loss = self.get_loss(out,p,l).numpy()
+            iou = self.iou_metric(
+                            y_true = l, 
+                            y_pred = tf.cast(out>0.5, dtype=tf.int32)
+            ).numpy()
+            losses.append(loss)
+            ious.append(iou)
+        return {'loss': np.mean(losses), 'iou': ious[-1]}
+
+    def summary_result(self):
+        """
+        runs summary_dataset over train, val and test
+        returns a dataframe with dataset rows and loss/metric columns
+        """
+        r = [self.summary_dataset(i) for i in ['train', 'val', 'test']]
+        r = pd.DataFrame(r, index = ['train', 'val', 'test'])
+        return r
+
 
 class CustomUnetSegmentation(GenericUnet):
 
