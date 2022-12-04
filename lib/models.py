@@ -155,6 +155,9 @@ class GenericUnet:
             out = tf.sigmoid(50*(out-0.5))
             return tf.reduce_mean(
                         (tf.reduce_mean(out, axis=[1,2]) - p[:,2])**2)
+        elif self.loss_name == 'pmse_on_proportions':
+            return tf.reduce_mean(
+                        (tf.reduce_mean(out, axis=[1,2]) - p[:,2])**2)
         elif self.loss_name == 'binxe_on_proportions':
             o = tf.sigmoid(50*(out-0.5))
             return self.binxe_loss(p[:,2], tf.reduce_mean(o, axis=[1,2]))
