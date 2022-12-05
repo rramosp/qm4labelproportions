@@ -220,11 +220,10 @@ class GenericUnet:
                 wandb.log({"val/loss": val_loss})
                 wandb.log({"val/iou": val_iou})
 
-                if 'proportions' in self.loss_name:
-                    wandb.log({'train/mseprops_on_chip': 
-                                    mse_proportions_on_chip(l, out)})
-                    wandb.log({'val/mseprops_on_chip': 
-                                    mse_proportions_on_chip(val_l, val_out)})
+                wandb.log({'train/mseprops_on_chip': 
+                                mse_proportions_on_chip(l, out)})
+                wandb.log({'val/mseprops_on_chip': 
+                                mse_proportions_on_chip(val_l, val_out)})
 
 
     def summary_dataset(self, dataset_name):
