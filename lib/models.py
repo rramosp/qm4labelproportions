@@ -12,6 +12,14 @@ from rlxutils import subplots
 import segmentation_models as sm
 import pandas as pd
 
+
+
+def mse_proportions_on_chip(y_true, y_pred): 
+    return tf.reduce_mean(
+                    (tf.reduce_mean(y_pred, axis=[1,2]) \
+                     - tf.reduce_mean(y_true, axis=[1,2]))**2
+                )
+
 def get_iou(class_number, y_true, y_pred):
     """
     assumes y_true/y_pred contain a batch of size (batch_size, other_dims)
@@ -212,6 +220,13 @@ class GenericUnet:
                 wandb.log({"val/loss": val_loss})
                 wandb.log({"val/iou": val_iou})
 
+                if 'proportions' in self.loss_name:
+                    wandb.log({'train/mseprops_on_chip': 
+                                    mse_proportions_on_chip(l, out)})
+                    wandb.log({'val/mseprops_on_chip': 
+                                    mse_proportions_on_chip(val_l, val_out)})
+
+
     def summary_dataset(self, dataset_name):
         assert dataset_name in ['train', 'val', 'test']
 
@@ -223,7 +238,7 @@ class GenericUnet:
         else:
             dataset = self.ts
 
-        losses, ious = [], []
+        losses, ious, mseps = [], [], []
         for x, (p,l) in pbar(dataset):
             x,l = self.normitem(x,l)
             out = self.predict(x)
@@ -232,9 +247,11 @@ class GenericUnet:
                             y_true = l, 
                             y_pred = tf.cast(out>0.5, dtype=tf.int32)
             ).numpy()
+            msep =  mse_proportions_on_chip(l, out).numpy()
             losses.append(loss)
             ious.append(iou)
-        return {'loss': np.mean(losses), 'iou': ious[-1]}
+            mseps.append(msep)
+        return {'loss': np.mean(losses), 'iou': ious[-1], 'mseprops_on_chip': np.mean(mseps)}
 
     def summary_result(self):
         """
