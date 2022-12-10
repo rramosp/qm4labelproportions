@@ -249,16 +249,21 @@ class GenericUnet:
             x,l = self.normitem(x,l)
             out = self.predict(x)
             loss = self.get_loss(out,p,l).numpy()
-            iou = self.iou_metric(
-                            y_true = l, 
-                            y_pred = tf.cast(out>0.5, dtype=tf.int32)
+            if self.measure_iou:
+                iou = self.iou_metric(
+                                y_true = l, 
+                                y_pred = tf.cast(out>0.5, dtype=tf.int32)
             ).numpy()
             msep =  mse_proportions_on_chip(l, out).numpy()
             losses.append(loss)
-            ious.append(iou)
+            if self.measure_iou:
+                ious.append(iou)
             mseps.append(msep)
-        return {'loss': np.mean(losses), 'iou': ious[-1], 'mseprops_on_chip': np.mean(mseps)}
-
+        if self.measure_iou:
+            return {'loss': np.mean(losses), 'iou': ious[-1], 'mseprops_on_chip': np.mean(mseps)}
+        else:
+            return {'loss': np.mean(losses), 'mseprops_on_chip': np.mean(mseps)}
+            
     def summary_result(self):
         """
         runs summary_dataset over train, val and test
