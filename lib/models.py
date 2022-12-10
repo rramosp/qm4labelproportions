@@ -121,13 +121,14 @@ class GenericUnet:
         val_x, val_p, val_l, val_out = self.get_val_sample()
         tval_out = (val_out>0.5).astype(int)
 
-        ious = []
         y_true = val_l
         y_pred = tval_out
-        for i in range(len(y_true)):
-            self.iou_metric.reset_state()
-            self.iou_metric.update_state(y_true[i:i+1], y_pred[i:i+1])
-            ious.append(self.iou_metric.result().numpy())
+        if self.measure_iou:
+            ious = []
+            for i in range(len(y_true)):
+                self.iou_metric.reset_state()
+                self.iou_metric.update_state(y_true[i:i+1], y_pred[i:i+1])
+                ious.append(self.iou_metric.result().numpy())
 
         #ious = np.r_[[get_iou(class_number=i, y_true=val_l, y_pred=tval_out) for i in range(2)]].mean(axis=0)
         for ax,i in subplots(len(val_x)):
@@ -140,7 +141,8 @@ class GenericUnet:
 
         for ax,i in subplots(len(val_out)):
             plt.imshow(tval_out[i])
-            plt.title(f"iou {ious[i]:.2f}")
+            if self.measure_iou:
+                plt.title(f"iou {ious[i]:.2f}")
             if i==0: plt.ylabel("thresholded output")
 
         for ax,i in subplots(len(val_out)):
