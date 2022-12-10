@@ -120,7 +120,8 @@ class GenericUnet:
     def plot_val_sample(self, n=10):
         val_x, val_p, val_l, val_out = self.get_val_sample()
         tval_out = (val_out>0.5).astype(int)
-
+        chip_props_on_out = [i.mean() for i in val_out>0.5]
+        chip_props_on_label = [i.mean() for i in val_l>0.5]
         y_true = val_l
         y_pred = tval_out
         if self.measure_iou:
@@ -138,11 +139,14 @@ class GenericUnet:
         for ax,i in subplots(len(val_l)):
             plt.imshow(val_l[i])
             if i==0: plt.ylabel("labels")
+            plt.title(f"chip props {chip_props_on_label[i]:.2f}")
 
         for ax,i in subplots(len(val_out)):
             plt.imshow(tval_out[i])
+            title = f"chip props {chip_props_on_out[i]:.2f}"
             if self.measure_iou:
-                plt.title(f"iou {ious[i]:.2f}")
+                title += f"  iou {ious[i]:.2f}"
+            plt.title(title)
             if i==0: plt.ylabel("thresholded output")
 
         for ax,i in subplots(len(val_out)):
