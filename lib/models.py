@@ -52,9 +52,13 @@ class GenericUnet:
                  loss='mse',
                  wandb_project = 'qm4labelproportions',
                  wandb_entity = 'rramosp',
-                 partitions_id = 'aschips'):
+                 partitions_id = 'aschips',
+                 cache_size = 10000,
+                 measure_iou=True):
         self.learning_rate = learning_rate
+        self.measure_iou = measure_iou
         self.loss_name = loss
+        self.cache_size = cache_size
         self.partitions_id = partitions_id
         self.run_name = f"{self.get_name()}-{self.partitions_id}-{self.loss_name}-{datetime.now().strftime('%Y%m%d[%H%M]')}"
         self.model = self.get_model()
@@ -75,7 +79,7 @@ class GenericUnet:
                 train_size = self.train_size,
                 test_size = self.test_size, 
                 val_size = self.val_size,
-                cache_size = 10000,
+                cache_size = cache_size,
                 shuffle = True                                             
             )
 
@@ -192,14 +196,15 @@ class GenericUnet:
 
                 grads = t.gradient(loss, self.model.trainable_variables)
                 self.opt.apply_gradients(zip(grads, self.model.trainable_variables))
-
-                self.iou_metric.reset_states()
-                tr_iou = self.iou_metric(
-                            y_true = l, 
-                            y_pred = tf.cast(out>0.5, dtype=tf.int32)
-                )
                 wandb.log({"train/loss": loss})
-                wandb.log({"train/iou": tr_iou})
+
+                if self.measure_iou:
+                    self.iou_metric.reset_states()
+                    tr_iou = self.iou_metric(
+                                y_true = l, 
+                                y_pred = tf.cast(out>0.5, dtype=tf.int32)
+                    )
+                    wandb.log({"train/iou": tr_iou})
 
                 try:
                     val_x, (val_p, val_l) = gen_val.__next__()
@@ -210,15 +215,15 @@ class GenericUnet:
                 val_x,val_l = self.normitem(val_x,val_l)
                 val_out = self.predict(val_x)
                 val_loss = self.get_loss(val_out,val_p,val_l)
-
-                self.iou_metric.reset_states()
-                val_iou = self.iou_metric(
-                            y_true = val_l, 
-                            y_pred = tf.cast(val_out>0.5, dtype=tf.int32)
-                )
-
                 wandb.log({"val/loss": val_loss})
-                wandb.log({"val/iou": val_iou})
+
+                if self.measure_iou:
+                    self.iou_metric.reset_states()
+                    val_iou = self.iou_metric(
+                                y_true = val_l, 
+                                y_pred = tf.cast(val_out>0.5, dtype=tf.int32)
+                    )
+                    wandb.log({"val/iou": val_iou})
 
                 wandb.log({'train/mseprops_on_chip': 
                                 mse_proportions_on_chip(l, out)})
