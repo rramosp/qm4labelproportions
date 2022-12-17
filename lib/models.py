@@ -491,4 +491,4 @@ class PatchClassifierSegmentation(GenericUnet):
         return m
 
     def get_name(self):
-        return f"patch_classifier"
+        return f"patch_classifier_segm"
