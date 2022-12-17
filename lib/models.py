@@ -369,3 +369,126 @@ class SMUnetSegmentation(GenericUnet):
     def get_name(self):
         return f"{self.backbone}_unet"
 
+
+# Patch extraction as a layer 
+# from https://keras.io/examples/vision/mlp_image_classification/
+class Patches(tf.keras.layers.Layer):
+    def __init__(self, patch_size, image_size, strides):
+        super(Patches, self).__init__()
+        self.patch_size = patch_size
+        self.strides = strides
+        self.num_patches = (image_size - patch_size) // strides + 1 
+
+    def call(self, images):
+        batch_size = tf.shape(images)[0]
+        patches = tf.image.extract_patches(
+            images=images,
+            sizes=[1, self.patch_size, self.patch_size, 1],
+            strides=[1, self.strides, self.strides, 1],
+            rates=[1, 1, 1, 1],
+            padding="VALID",
+        )
+        patch_dims = patches.shape[-1]
+        patches = tf.reshape(patches, [batch_size, self.num_patches ** 2, patch_dims])
+        return patches
+
+
+class PatchProportionsRegression(GenericUnet):
+
+    def __init__(self, input_shape,
+                     patch_size, 
+                     pred_strides,
+                     num_units,
+                     dropout_rate):
+        self.input_shape = input_shape
+        self.patch_size = patch_size 
+        self.pred_strides = pred_strides
+        self.num_units = num_units
+        self.dropout_rate = dropout_rate
+
+    def get_wandb_config(self):
+      w = super().get_wandb_config()
+      w.update({'patch_size':self.patch_size, 
+                'pred_strides': self.pred_strides,
+                'num_units':self.num_units})
+      return w
+
+    def get_model(self):
+        inputs = tf.keras.layers.Input(shape=self.input_shape)
+        # Create patches.
+        patch_extr = Patches(self.patch_size, 96, self.pred_strides)
+        patches = patch_extr(inputs)
+        # Process x using the module blocks.
+        x = tf.keras.layers.Dense(self.num_units, activation="gelu")(patches)
+        # Apply dropout.
+        x = tf.keras.layers.Dropout(rate=self.dropout_rate)(x)
+        # Label proportions prediction layer
+        probs = tf.keras.layers.Dense(1, activation="sigmoid")(x)
+        # Construct image from label proportions
+        conv2dt = tf.keras.layers.Conv2DTranspose(filters=1,
+                        kernel_size=self.patch_size,
+                        strides=self.pred_strides,
+                        kernel_initializer=tf.keras.initializers.Ones(),
+                        bias_initializer=tf.keras.initializers.Zeros(),
+                        trainable=False)
+        probs = tf.reshape(probs, [-1, patch_extr.num_patches, patch_extr.num_patches, 1])
+        out = probs
+        #out = tf.keras.layers.UpSampling2D(size=(2, 2))(probs)
+
+        #ones = tf.ones_like(probs)
+        #out = conv2dt(probs) / conv2dt(ones)
+        m = tf.keras.models.Model([inputs], [out])
+        return m
+
+    def get_name(self):
+        return f"patch_classifier"
+
+
+class PatchClassifierSegmentation(GenericUnet):
+
+    def __init__(self, input_shape,
+                     patch_size, 
+                     pred_strides,
+                     num_units,
+                     dropout_rate):
+        self.input_shape = input_shape
+        self.patch_size = patch_size 
+        self.pred_strides = pred_strides
+        self.num_units = num_units
+        self.dropout_rate = dropout_rate
+
+    def get_wandb_config(self):
+      w = super().get_wandb_config()
+      w.update({'patch_size':self.patch_size, 
+                'pred_strides': self.pred_strides,
+                'num_units':self.num_units})
+      return w
+
+    def get_model(self):
+        inputs = tf.keras.layers.Input(shape=self.input_shape)
+        # Create patches.
+        patch_extr = Patches(self.patch_size, 96, self.pred_strides)
+        patches = patch_extr(inputs)
+        # Process x using the module blocks.
+        x = tf.keras.layers.Dense(self.num_units, activation="gelu")(patches)
+        # Apply dropout.
+        x = tf.keras.layers.Dropout(rate=self.dropout_rate)(x)
+        # Label proportions prediction layer
+        probs = tf.keras.layers.Dense(1, activation="sigmoid")(x)
+        # Construct image from label proportions
+        conv2dt = tf.keras.layers.Conv2DTranspose(filters=1,
+                        kernel_size=self.patch_size,
+                        strides=self.pred_strides,
+                        kernel_initializer=tf.keras.initializers.Ones(),
+                        bias_initializer=tf.keras.initializers.Zeros(),
+                        trainable=False)
+        probs = tf.reshape(probs, [-1, patch_extr.num_patches, patch_extr.num_patches, 1])
+        out = tf.keras.layers.UpSampling2D(size=(2, 2))(probs)
+
+        ones = tf.ones_like(probs)
+        out = conv2dt(probs) / conv2dt(ones)
+        m = tf.keras.models.Model([inputs], [out])
+        return m
+
+    def get_name(self):
+        return f"patch_classifier"
