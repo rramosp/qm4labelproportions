@@ -11,7 +11,7 @@ from . import data
 from rlxutils import subplots
 import segmentation_models as sm
 import pandas as pd
-
+import gc
 
 
 def mse_proportions_on_chip(y_true, y_pred): 
@@ -53,10 +53,9 @@ class GenericUnet:
                  wandb_project = 'qm4labelproportions',
                  wandb_entity = 'rramosp',
                  partitions_id = 'aschips',
-                 cache_size = 10000,
-                 measure_iou=True):
+                 cache_size = 10000):
+
         self.learning_rate = learning_rate
-        self.measure_iou = measure_iou
         self.loss_name = loss
         self.cache_size = cache_size
         self.partitions_id = partitions_id
@@ -91,6 +90,16 @@ class GenericUnet:
         print ()
         return self
 
+    def empty_caches(self):
+        self.tr.empty_cache()
+        self.val.empty_cache()
+        self.ts.empty_cache()
+        gc.collect()
+
+
+    def measure_iou(self):
+        return True
+
     def get_wandb_config(self):
         self.trainable_params = sum(count_params(layer) for layer in self.model.trainable_weights)
         self.non_trainable_params = sum(count_params(layer) for layer in self.model.non_trainable_weights)
@@ -124,7 +133,7 @@ class GenericUnet:
         chip_props_on_label = [i.mean() for i in val_l>0.5]
         y_true = val_l
         y_pred = tval_out
-        if self.measure_iou:
+        if self.measure_iou():
             ious = []
             for i in range(len(y_true)):
                 self.iou_metric.reset_state()
@@ -144,7 +153,7 @@ class GenericUnet:
         for ax,i in subplots(len(val_out)):
             plt.imshow(tval_out[i])
             title = f"chip props {chip_props_on_out[i]:.2f}"
-            if self.measure_iou:
+            if self.measure_iou():
                 title += f"  iou {ious[i]:.2f}"
             plt.title(title)
             if i==0: plt.ylabel("thresholded output")
@@ -204,7 +213,7 @@ class GenericUnet:
                 self.opt.apply_gradients(zip(grads, self.model.trainable_variables))
                 wandb.log({"train/loss": loss})
 
-                if self.measure_iou:
+                if self.measure_iou():
                     self.iou_metric.reset_states()
                     tr_iou = self.iou_metric(
                                 y_true = l, 
@@ -223,7 +232,7 @@ class GenericUnet:
                 val_loss = self.get_loss(val_out,val_p,val_l)
                 wandb.log({"val/loss": val_loss})
 
-                if self.measure_iou:
+                if self.measure_iou():
                     self.iou_metric.reset_states()
                     val_iou = self.iou_metric(
                                 y_true = val_l, 
@@ -253,17 +262,17 @@ class GenericUnet:
             x,l = self.normitem(x,l)
             out = self.predict(x)
             loss = self.get_loss(out,p,l).numpy()
-            if self.measure_iou:
+            if self.measure_iou():
                 iou = self.iou_metric(
                                 y_true = l, 
                                 y_pred = tf.cast(out>0.5, dtype=tf.int32)
             ).numpy()
             msep =  mse_proportions_on_chip(l, out).numpy()
             losses.append(loss)
-            if self.measure_iou:
+            if self.measure_iou():
                 ious.append(iou)
             mseps.append(msep)
-        if self.measure_iou:
+        if self.measure_iou():
             return {'loss': np.mean(losses), 'iou': ious[-1], 'mseprops_on_chip': np.mean(mseps)}
         else:
             return {'loss': np.mean(losses), 'mseprops_on_chip': np.mean(mseps)}
@@ -406,6 +415,9 @@ class PatchProportionsRegression(GenericUnet):
         self.num_units = num_units
         self.dropout_rate = dropout_rate
 
+    def measure_iou(self):
+        return False
+
     def get_wandb_config(self):
       w = super().get_wandb_config()
       w.update({'patch_size':self.patch_size, 
@@ -442,7 +454,6 @@ class PatchProportionsRegression(GenericUnet):
 
     def get_name(self):
         return f"patch_classifier"
-
 
 class PatchClassifierSegmentation(GenericUnet):
 
