@@ -145,7 +145,7 @@ class GenericUnet:
             plt.imshow(val_x[i])        
             if i==0: 
                 plt.ylabel("input rgb")
-                plt.label(f"{self.partitions_id} | {self.loss_name}")
+                plt.title(f"{self.partitions_id} | {self.loss_name}")
         for ax,i in subplots(len(val_l)):
             plt.imshow(val_l[i])
             if i==0: plt.ylabel("labels")
