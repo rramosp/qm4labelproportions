@@ -129,6 +129,9 @@ class S2LandcoverDataGenerator(tf.keras.utils.Sequence):
         self.cache_size = cache_size
         print (f"got {len(self.chips_basedirs):6d} chips on {len(self)} batches. cache size is {self.cache_size}")
 
+    def empty_cache(self):
+        self.cache = {}
+
     def __len__(self):
         'Denotes the number of batches per epoch'
         return int(np.floor(len(self.chips_basedirs) / self.batch_size))

@@ -143,8 +143,9 @@ class GenericUnet:
         #ious = np.r_[[get_iou(class_number=i, y_true=val_l, y_pred=tval_out) for i in range(2)]].mean(axis=0)
         for ax,i in subplots(len(val_x)):
             plt.imshow(val_x[i])        
-            if i==0: plt.ylabel("input rgb")
-
+            if i==0: 
+                plt.ylabel("input rgb")
+                plt.label(f"{self.partitions_id} | {self.loss_name}")
         for ax,i in subplots(len(val_l)):
             plt.imshow(val_l[i])
             if i==0: plt.ylabel("labels")
