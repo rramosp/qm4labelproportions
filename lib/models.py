@@ -276,7 +276,7 @@ class GenericUnet:
                 ious.append(iou)
             mseps.append(msep)
         if self.measure_iou():
-            return {'loss': np.mean(losses), 'iou': ious[-1], 'mseprops_on_chip': np.mean(mseps)}
+            return {'loss': np.mean(losses), 'iou': np.mean(ious), 'mseprops_on_chip': np.mean(mseps)}
         else:
             return {'loss': np.mean(losses), 'mseprops_on_chip': np.mean(mseps)}
             
