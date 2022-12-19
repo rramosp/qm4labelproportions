@@ -20,7 +20,7 @@ def mse_proportions_on_chip(y_true, y_pred):
                      - tf.reduce_mean(y_true, axis=[1,2]))**2
                 )
 
-def get_iou(class_number, y_true, y_pred):
+def custom_compute_iou(class_number, y_true, y_pred):
     """
     assumes y_true/y_pred contain a batch of size (batch_size, other_dims)
     returns a list of ious of size batch_size
@@ -34,6 +34,22 @@ def get_iou(class_number, y_true, y_pred):
         iou = 1 if union==0 else intersection/union
         iou_batch.append(iou)
     return np.r_[iou_batch]
+
+
+def compute_iou(y_true, y_pred):
+    y_pred = tf.cast(y_pred>0.5, tf.int32)
+
+    # resize smallest
+    if y_true.shape[-1]<y_pred.shape[-1]:
+        y_true = tf.image.resize(y_true[..., tf.newaxis], y_pred.shape[1:], method='nearest')[:,:,:,0]
+
+    if y_pred.shape[-1]<y_true.shape[-1]:
+        y_pred = tf.image.resize(y_pred[..., tf.newaxis], y_true.shape[1:], method='nearest')[:,:,:,0]
+
+    iou_metric = tf.keras.metrics.MeanIoU(num_classes=2)
+    iou_metric.reset_states()
+    iou = iou_metric(y_true, y_pred)
+    return iou
 
 class GenericUnet:
 
@@ -81,8 +97,6 @@ class GenericUnet:
                 cache_size = cache_size,
                 shuffle = True                                             
             )
-
-        self.iou_metric = tf.keras.metrics.MeanIoU(num_classes=2)
 
         wconfig = self.get_wandb_config()
         wandb.init(project=wandb_project, entity=wandb_entity, 
@@ -136,9 +150,8 @@ class GenericUnet:
         if self.measure_iou():
             ious = []
             for i in range(len(y_true)):
-                self.iou_metric.reset_state()
-                self.iou_metric.update_state(y_true[i:i+1], y_pred[i:i+1])
-                ious.append(self.iou_metric.result().numpy())
+                iou = compute_iou(y_true[i:i+1], y_pred[i:i+1]).numpy()
+                ious.append(iou)
 
         #ious = np.r_[[get_iou(class_number=i, y_true=val_l, y_pred=tval_out) for i in range(2)]].mean(axis=0)
         for ax,i in subplots(len(val_x)):
@@ -215,11 +228,7 @@ class GenericUnet:
                 wandb.log({"train/loss": loss})
 
                 if self.measure_iou():
-                    self.iou_metric.reset_states()
-                    tr_iou = self.iou_metric(
-                                y_true = l, 
-                                y_pred = tf.cast(out>0.5, dtype=tf.int32)
-                    )
+                    tr_iou = compute_iou(l, out)
                     wandb.log({"train/iou": tr_iou})
 
                 try:
@@ -234,11 +243,7 @@ class GenericUnet:
                 wandb.log({"val/loss": val_loss})
 
                 if self.measure_iou():
-                    self.iou_metric.reset_states()
-                    val_iou = self.iou_metric(
-                                y_true = val_l, 
-                                y_pred = tf.cast(val_out>0.5, dtype=tf.int32)
-                    )
+                    val_iou = compute_iou(val_l, val_out)
                     wandb.log({"val/iou": val_iou})
 
                 wandb.log({'train/mseprops_on_chip': 
@@ -250,7 +255,6 @@ class GenericUnet:
     def summary_dataset(self, dataset_name):
         assert dataset_name in ['train', 'val', 'test']
 
-        self.iou_metric.reset_states()
         if dataset_name == 'train':
             dataset = self.tr
         elif dataset_name == 'val':
@@ -264,10 +268,8 @@ class GenericUnet:
             out = self.predict(x)
             loss = self.get_loss(out,p,l).numpy()
             if self.measure_iou():
-                iou = self.iou_metric(
-                                y_true = l, 
-                                y_pred = tf.cast(out>0.5, dtype=tf.int32)
-            ).numpy()
+                iou = compute_iou(l, out).numpy()
+
             msep =  mse_proportions_on_chip(l, out).numpy()
             losses.append(loss)
             if self.measure_iou():
@@ -415,9 +417,6 @@ class PatchProportionsRegression(GenericUnet):
         self.pred_strides = pred_strides
         self.num_units = num_units
         self.dropout_rate = dropout_rate
-
-    def measure_iou(self):
-        return False
 
     def get_wandb_config(self):
       w = super().get_wandb_config()
