@@ -53,6 +53,10 @@ def compute_iou(y_true, y_pred):
 
 class GenericUnet:
 
+    def __init__(self, *args, **kwargs):
+      # just to have a constructor accepting parameters
+      pass
+
     def normitem(self, x,l):
         x = x[:,2:-2,2:-2,:]
         l = l[:,2:-2,2:-2]
