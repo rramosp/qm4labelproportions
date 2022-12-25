@@ -203,22 +203,19 @@ class GenericUnet:
             if i==0: 
                 plt.ylabel("input rgb")
                 plt.title(f"{self.partitions_id} | {self.loss_name}")
+                
         for ax,i in subplots(len(val_l)):
             plt.imshow(val_l[i])
             if i==0: plt.ylabel("labels")
             plt.title(f"chip props {chip_props_on_label[i]:.2f}")
 
         for ax,i in subplots(len(val_out)):
-            plt.imshow(tval_out[i])
+            plt.imshow(tval_out[i].argmax(axis=-1))
             title = f"chip props {chip_props_on_out[i]:.2f}"
             if self.measure_iou():
                 title += f"  iou {ious[i]:.2f}"
             plt.title(title)
             if i==0: plt.ylabel("thresholded output")
-
-        for ax,i in subplots(len(val_out)):
-            plt.imshow(val_out[i])
-            if i==0: plt.ylabel("unthreshold output")
 
         return val_x, val_p, val_l, val_out
 
