@@ -55,10 +55,14 @@ def compute_iou(y_true, y_pred, num_classes=2):
     if y_pred.shape[-1]<y_true.shape[-1]:
         y_pred = tf.image.resize(y_pred, y_true.shape[1:], method='nearest')
     
+    # convert selected class numbers to 0..n for keras MeanIoU to work
+    cy_true = tf.reduce_sum(tf.stack([tf.cast(y_true==class_id, tf.int32)*i for i, class_id in enumerate(class_ids)], axis=-1), axis=-1)   
+    cy_pred = tf.argmax(y_pred, axis=-1)    
+    
     # compute iou
     iou_metric = tf.keras.metrics.MeanIoU(num_classes=num_classes)
     iou_metric.reset_states()
-    iou = iou_metric(y_true, tf.argmax(y_pred, axis=-1))
+    iou = iou_metric(cy_true,  cy_pred)
     return iou
 
 class GenericUnet:
