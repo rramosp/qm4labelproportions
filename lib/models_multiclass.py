@@ -78,7 +78,6 @@ def compute_iou(y_true, y_pred):
 
     if y_pred.shape[-1]<y_true.shape[-1]:
         y_pred = tf.image.resize(y_pred, y_true.shape[1:], method='nearest')
-    print (y_true.shape, y_pred.shape)
     
     # compute iou
     iou_metric = tf.keras.metrics.MeanIoU(num_classes=2)
