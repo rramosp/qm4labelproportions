@@ -92,7 +92,7 @@ class GenericUnet:
                  train_size=.7, 
                  val_size=0.2, 
                  test_size=0.1,
-                 loss='mse',
+                 loss='multiclass_proportions_mse',
                  wandb_project = 'qm4labelproportions',
                  wandb_entity = 'rramosp',
                  partitions_id = 'aschips',
@@ -218,24 +218,9 @@ class GenericUnet:
         raise NotImplementedError()
 
     def get_loss(self, out, p, l):
-        if self.loss_name == 'mse':
-          return tf.reduce_mean( (l-out)**2)
-        elif self.loss_name == 'dice':
-          out = tf.sigmoid(50*(out-0.5))
-          return self.dice_loss(l, out)
-        elif self.loss_name == 'binxe':
-          return self.binxe_loss(l, out)
-        elif self.loss_name == 'mse_on_proportions':
-            out = tf.sigmoid(50*(out-0.5))
-            return tf.reduce_mean(
-                        (tf.reduce_mean(out, axis=[1,2]) - p[:,2])**2)
-        elif self.loss_name == 'pmse_on_proportions':
-            return tf.reduce_mean(
-                        (tf.reduce_mean(out, axis=[1,2]) - p[:,2])**2)
-        elif self.loss_name == 'binxe_on_proportions':
-            o = tf.sigmoid(50*(out-0.5))
-            return self.binxe_loss(p[:,2], tf.reduce_mean(o, axis=[1,2]))
-
+        if self.loss_name == 'multiclass_proportions_mse':
+            return multiclass_proportions_mse(out, p, self.class_weights)
+            
         raise ValueError(f"unkown loss '{self.loss_name}'")
 
     def predict(self, x):
