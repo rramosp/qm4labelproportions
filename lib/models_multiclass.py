@@ -20,6 +20,29 @@ def mse_proportions_on_chip(y_true, y_pred):
                      - tf.reduce_mean(y_true, axis=[1,2]))**2
                 )
 
+def multiclass_proportions_mse(y_pred, proportions, class_weights):
+    # normalize weights to sum up to 1
+    class_weights = {k:v/sum(class_weights.values()) for k,v in class_weights.items()}
+
+    # make sure class ids are ordered
+    class_ids = np.sort(list(class_weights.keys()))
+    class_w   = np.r_[[class_weights[i] for i in class_ids]]       
+
+    # select only the proportions of the specified classes (columns)
+    proportions_selected = tf.gather(proportions, class_ids, axis=1)
+
+    # compute the proportions on prediction
+    proportions_y_pred = tf.reduce_mean(y_pred, axis=[1,2])
+
+    # compute mse using class weights
+    r = tf.reduce_mean(
+            tf.reduce_sum(
+                (proportions_selected - proportions_y_pred)**2 * class_w, 
+                axis=-1
+            )
+    )
+    return r
+
 def custom_compute_iou(class_number, y_true, y_pred):
     """
     assumes y_true/y_pred contain a batch of size (batch_size, other_dims)
@@ -73,7 +96,8 @@ class GenericUnet:
                  wandb_project = 'qm4labelproportions',
                  wandb_entity = 'rramosp',
                  partitions_id = 'aschips',
-                 cache_size = 10000):
+                 cache_size = 10000,
+                 class_weights = {2: 1, 11:1}):
 
         self.learning_rate = learning_rate
         self.loss_name = loss
@@ -81,6 +105,7 @@ class GenericUnet:
         self.partitions_id = partitions_id
         self.wandb_project = wandb_project
         self.wandb_entity = wandb_entity
+        self.class_weights = class_weights
 
         self.run_name = f"{self.get_name()}-{self.partitions_id}-{self.loss_name}-{datetime.now().strftime('%Y%m%d[%H%M]')}"
         self.model = self.get_model()
@@ -105,7 +130,7 @@ class GenericUnet:
                 shuffle = True                                             
             )
 
-        if self.wandb_project is not None:
+        if wandb_project is not None:
             wconfig = self.get_wandb_config()
             wandb.init(project=wandb_project, entity=wandb_entity, 
                         name=self.run_name, config=wconfig)
@@ -235,11 +260,11 @@ class GenericUnet:
                 self.opt.apply_gradients(zip(grads, self.model.trainable_variables))
 
                 if self.wandb_project is not None:
-                        wandb.log({"train/loss": loss})
+                    wandb.log({"train/loss": loss})
 
-                        if self.measure_iou():
-                            tr_iou = compute_iou(l, out)
-                            wandb.log({"train/iou": tr_iou})
+                    if self.measure_iou():
+                        tr_iou = compute_iou(l, out)
+                        wandb.log({"train/iou": tr_iou})
 
                 try:
                     val_x, (val_p, val_l) = gen_val.__next__()
@@ -250,7 +275,6 @@ class GenericUnet:
                 val_x,val_l = self.normitem(val_x,val_l)
                 val_out = self.predict(val_x)
                 val_loss = self.get_loss(val_out,val_p,val_l)
-
 
                 if self.wandb_project is not None:
                     wandb.log({"val/loss": val_loss})
@@ -363,7 +387,7 @@ class CustomUnetSegmentation(GenericUnet):
         c9 = Dropout(0.1) (c9)
         c9 = Conv2D(16, (3, 3), activation='elu', kernel_initializer='he_normal', padding='same') (c9)
 
-        outputs = Conv2D(1, (1, 1), activation=activation) (c9)
+        outputs = Conv2D(len(self.class_weights), (1, 1), activation=activation) (c9)
 
         model = Model(inputs=[inputs], outputs=[outputs])
         
@@ -387,7 +411,7 @@ class SMUnetSegmentation(GenericUnet):
 
         inp = tf.keras.layers.Input(shape=(None, None, 3))
         out = unet(inp)
-        out = tf.keras.layers.Conv2D(1, (1,1), padding='same', activation='sigmoid')(out)
+        out = tf.keras.layers.Conv2D(len(self.class_weights), (1,1), padding='same', activation='sigmoid')(out)
         m = tf.keras.models.Model([inp], [out])
         return m
 
@@ -448,20 +472,9 @@ class PatchProportionsRegression(GenericUnet):
         # Apply dropout.
         x = tf.keras.layers.Dropout(rate=self.dropout_rate)(x)
         # Label proportions prediction layer
-        probs = tf.keras.layers.Dense(1, activation="sigmoid")(x)
-        # Construct image from label proportions
-        conv2dt = tf.keras.layers.Conv2DTranspose(filters=1,
-                        kernel_size=self.patch_size,
-                        strides=self.pred_strides,
-                        kernel_initializer=tf.keras.initializers.Ones(),
-                        bias_initializer=tf.keras.initializers.Zeros(),
-                        trainable=False)
-        probs = tf.reshape(probs, [-1, patch_extr.num_patches, patch_extr.num_patches, 1])
-        out = probs
-        #out = tf.keras.layers.UpSampling2D(size=(2, 2))(probs)
+        probs = tf.keras.layers.Dense(len(self.class_weights), activation="sigmoid")(x)
+        out   = tf.reshape(probs, [-1, patch_extr.num_patches, patch_extr.num_patches, len(self.class_weights)])
 
-        #ones = tf.ones_like(probs)
-        #out = conv2dt(probs) / conv2dt(ones)
         m = tf.keras.models.Model([inputs], [out])
         return m
 
@@ -498,15 +511,15 @@ class PatchClassifierSegmentation(GenericUnet):
         # Apply dropout.
         x = tf.keras.layers.Dropout(rate=self.dropout_rate)(x)
         # Label proportions prediction layer
-        probs = tf.keras.layers.Dense(1, activation="sigmoid")(x)
+        probs = tf.keras.layers.Dense(len(self.class_weights), activation="sigmoid")(x)
         # Construct image from label proportions
-        conv2dt = tf.keras.layers.Conv2DTranspose(filters=1,
+        conv2dt = tf.keras.layers.Conv2DTranspose(filters=len(self.class_weights),
                         kernel_size=self.patch_size,
                         strides=self.pred_strides,
                         kernel_initializer=tf.keras.initializers.Ones(),
                         bias_initializer=tf.keras.initializers.Zeros(),
                         trainable=False)
-        probs = tf.reshape(probs, [-1, patch_extr.num_patches, patch_extr.num_patches, 1])
+        probs = tf.reshape(probs, [-1, patch_extr.num_patches, patch_extr.num_patches, len(self.class_weights)])
         out = tf.keras.layers.UpSampling2D(size=(2, 2))(probs)
 
         ones = tf.ones_like(probs)
