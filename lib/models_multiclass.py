@@ -70,7 +70,7 @@ def custom_compute_iou(class_number, y_true, y_pred):
     return np.r_[iou_batch]
 
 
-def compute_iou(y_true, y_pred):
+def compute_iou(y_true, y_pred, num_classes=2):
 
     # resize smallest
     if y_true.shape[-1]<y_pred.shape[-1]:
@@ -80,9 +80,9 @@ def compute_iou(y_true, y_pred):
         y_pred = tf.image.resize(y_pred, y_true.shape[1:], method='nearest')
     
     # compute iou
-    iou_metric = tf.keras.metrics.MeanIoU(num_classes=2)
+    iou_metric = tf.keras.metrics.MeanIoU(num_classes=num_classes)
     iou_metric.reset_states()
-    iou = iou_metric(y_true, tf.argmax(y_pred, axis=-1))
+    iou = iou_metric(y_true, tf.argmin(y_pred, axis=-1))
     return iou
 
 class GenericUnet:
@@ -194,7 +194,7 @@ class GenericUnet:
         if self.measure_iou():
             ious = []
             for i in range(len(y_true)):
-                iou = compute_iou(y_true[i:i+1], y_pred[i:i+1]).numpy()
+                iou = compute_iou(y_true[i:i+1], y_pred[i:i+1], len(self.class_weights)).numpy()
                 ious.append(iou)
 
         #ious = np.r_[[get_iou(class_number=i, y_true=val_l, y_pred=tval_out) for i in range(2)]].mean(axis=0)
@@ -259,7 +259,7 @@ class GenericUnet:
                     wandb.log({"train/loss": loss})
 
                     if self.measure_iou():
-                        tr_iou = compute_iou(l, out)
+                        tr_iou = compute_iou(l, out, len(self.class_weights))
                         wandb.log({"train/iou": tr_iou})
 
                 try:
@@ -276,7 +276,7 @@ class GenericUnet:
                     wandb.log({"val/loss": val_loss})
 
                     if self.measure_iou():
-                        val_iou = compute_iou(val_l, val_out)
+                        val_iou = compute_iou(val_l, val_out, len(self.class_weights))
                         wandb.log({"val/iou": val_iou})
 
                     wandb.log({'train/mseprops_on_chip': 
@@ -301,7 +301,7 @@ class GenericUnet:
             out = self.predict(x)
             loss = self.get_loss(out,p,l).numpy()
             if self.measure_iou():
-                iou = compute_iou(l, out).numpy()
+                iou = compute_iou(l, out, len(self.class_weights)).numpy()
 
             msep =  multiclass_proportions_mse_on_chip(l, out, self.class_weights).numpy()
             losses.append(loss)
