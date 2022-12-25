@@ -220,11 +220,11 @@ class GenericUnet:
     def get_loss(self, out, p, l):
         if self.loss_name == 'multiclass_proportions_mse':
             return multiclass_proportions_mse(out, p, self.class_weights)
-            
+
         raise ValueError(f"unkown loss '{self.loss_name}'")
 
     def predict(self, x):
-        return self.model(x)[:,:,:,0]
+        return self.model(x)
 
     def fit(self, epochs=10):
 
