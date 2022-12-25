@@ -60,18 +60,19 @@ def custom_compute_iou(class_number, y_true, y_pred):
 
 
 def compute_iou(y_true, y_pred):
-    y_pred = tf.cast(y_pred>0.5, tf.int32)
 
     # resize smallest
     if y_true.shape[-1]<y_pred.shape[-1]:
-        y_true = tf.image.resize(y_true[..., tf.newaxis], y_pred.shape[1:], method='nearest')[:,:,:,0]
+        y_true = tf.image.resize(y_true, y_pred.shape[1:], method='nearest')
 
     if y_pred.shape[-1]<y_true.shape[-1]:
-        y_pred = tf.image.resize(y_pred[..., tf.newaxis], y_true.shape[1:], method='nearest')[:,:,:,0]
-
+        y_pred = tf.image.resize(y_pred, y_true.shape[1:], method='nearest')
+    print (y_true.shape, y_pred.shape)
+    
+    # compute iou
     iou_metric = tf.keras.metrics.MeanIoU(num_classes=2)
     iou_metric.reset_states()
-    iou = iou_metric(y_true, y_pred)
+    iou = iou_metric(y_true, tf.argmax(y_pred, axis=-1))
     return iou
 
 class GenericUnet:
