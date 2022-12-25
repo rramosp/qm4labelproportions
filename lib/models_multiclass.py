@@ -23,18 +23,10 @@ def get_sorted_class_weights(class_weights):
 
     return class_ids, class_w
 
-
 def multiclass_proportions_mse_on_chip(y_true, y_pred, class_weights):
-    class_ids, class_w = get_sorted_class_weights(class_weights)
-    class_mse = []
-    for i in range(len(class_weights)):
-        props_prediction = tf.reduce_mean(y_pred[:,:,:,i], axis=[1,2])
-        props_true       = tf.reduce_mean((y_true==i)*tf.constant(1., dtype=tf.float32), axis=[1,2])
-        mse = (props_prediction - props_true)**2
-        class_mse.append(mse)
-
-    r = tf.reduce_mean(tf.reduce_sum(tf.stack(class_mse, axis=-1)*class_w, axis=1))
-    return r
+    k = [tf.reduce_mean(tf.cast(y_true==i, tf.float32), axis=[1,2]) for i in range(12)]
+    proportions_y_true = tf.stack(k, axis=1)
+    return multiclass_proportions_mse(y_pred, proportions_y_true, class_weights)
 
 def multiclass_proportions_mse(y_pred, proportions, class_weights):
     class_ids, class_w = get_sorted_class_weights(class_weights)
@@ -54,22 +46,6 @@ def multiclass_proportions_mse(y_pred, proportions, class_weights):
     )
     return r
 
-def custom_compute_iou(class_number, y_true, y_pred):
-    """
-    assumes y_true/y_pred contain a batch of size (batch_size, other_dims)
-    returns a list of ious of size batch_size
-    """
-    iou_batch = []
-    cy_pred = (y_pred == class_number).astype(int)
-    cy_true = (y_true == class_number).astype(int)
-    for i in range(len(cy_pred)):
-        union        = ((cy_true[i]+cy_pred[i])>=1).sum()
-        intersection = ((cy_true[i]+cy_pred[i])==2).sum()
-        iou = 1 if union==0 else intersection/union
-        iou_batch.append(iou)
-    return np.r_[iou_batch]
-
-
 def compute_iou(y_true, y_pred, num_classes=2):
 
     # resize smallest
@@ -82,7 +58,7 @@ def compute_iou(y_true, y_pred, num_classes=2):
     # compute iou
     iou_metric = tf.keras.metrics.MeanIoU(num_classes=num_classes)
     iou_metric.reset_states()
-    iou = iou_metric(y_true, tf.argmin(y_pred, axis=-1))
+    iou = iou_metric(y_true, tf.argmax(y_pred, axis=-1))
     return iou
 
 class GenericUnet:
@@ -94,7 +70,6 @@ class GenericUnet:
     def normitem(self, x,l):
         x = x[:,2:-2,2:-2,:]
         l = l[:,2:-2,2:-2]
-        l = (l==2).astype(np.float32)
         return x,l
 
     def init_run(self, datadir, 
@@ -203,7 +178,7 @@ class GenericUnet:
             if i==0: 
                 plt.ylabel("input rgb")
                 plt.title(f"{self.partitions_id} | {self.loss_name}")
-                
+
         for ax,i in subplots(len(val_l)):
             plt.imshow(val_l[i])
             if i==0: plt.ylabel("labels")
@@ -232,7 +207,9 @@ class GenericUnet:
         raise ValueError(f"unkown loss '{self.loss_name}'")
 
     def predict(self, x):
-        return self.model(x)
+        out = self.model(x)
+        out = tf.keras.layers.Softmax(axis=-1)(out)
+        return out
 
     def fit(self, epochs=10):
 
