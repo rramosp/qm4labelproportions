@@ -13,20 +13,31 @@ import segmentation_models as sm
 import pandas as pd
 import gc
 
-
-def mse_proportions_on_chip(y_true, y_pred): 
-    return tf.reduce_mean(
-                    (tf.reduce_mean(y_pred, axis=[1,2]) \
-                     - tf.reduce_mean(y_true, axis=[1,2]))**2
-                )
-
-def multiclass_proportions_mse(y_pred, proportions, class_weights):
+def get_sorted_class_weights(class_weights):
     # normalize weights to sum up to 1
     class_weights = {k:v/sum(class_weights.values()) for k,v in class_weights.items()}
 
     # make sure class ids are ordered
     class_ids = np.sort(list(class_weights.keys()))
     class_w   = np.r_[[class_weights[i] for i in class_ids]]       
+
+    return class_ids, class_w
+
+
+def multiclass_proportions_mse_on_chip(y_true, y_pred, class_weights):
+    class_ids, class_w = get_sorted_class_weights(class_weights)
+    class_mse = []
+    for i in range(len(class_weights)):
+        props_prediction = tf.reduce_mean(y_pred[:,:,:,i], axis=[1,2])
+        props_true       = tf.reduce_mean((y_true==i)*tf.constant(1., dtype=tf.float32), axis=[1,2])
+        mse = (props_prediction - props_true)**2
+        class_mse.append(mse)
+
+    r = tf.reduce_mean(tf.reduce_sum(tf.stack(class_mse, axis=-1)*class_w, axis=1))
+    return r
+
+def multiclass_proportions_mse(y_pred, proportions, class_weights):
+    class_ids, class_w = get_sorted_class_weights(class_weights)
 
     # select only the proportions of the specified classes (columns)
     proportions_selected = tf.gather(proportions, class_ids, axis=1)
@@ -270,9 +281,9 @@ class GenericUnet:
                         wandb.log({"val/iou": val_iou})
 
                     wandb.log({'train/mseprops_on_chip': 
-                                    mse_proportions_on_chip(l, out)})
+                                    multiclass_proportions_mse_on_chip(l, out, self.class_weights)})
                     wandb.log({'val/mseprops_on_chip': 
-                                    mse_proportions_on_chip(val_l, val_out)})
+                                    multiclass_proportions_mse_on_chip(val_l, val_out, self.class_weights)})
 
 
     def summary_dataset(self, dataset_name):
@@ -293,7 +304,7 @@ class GenericUnet:
             if self.measure_iou():
                 iou = compute_iou(l, out).numpy()
 
-            msep =  mse_proportions_on_chip(l, out).numpy()
+            msep =  multiclass_proportions_mse_on_chip(l, out, self.class_weights).numpy()
             losses.append(loss)
             if self.measure_iou():
                 ious.append(iou)
