@@ -8,6 +8,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 import wandb
 from . import data
+from . import metrics
 from rlxutils import subplots
 import segmentation_models as sm
 import pandas as pd
@@ -101,14 +102,14 @@ class GenericUnet:
         self.run_name = f"{self.get_name()}-{self.partitions_id}-{self.loss_name}-{datetime.now().strftime('%Y%m%d[%H%M]')}"
         self.model = self.get_model()
         self.opt = tf.keras.optimizers.Adam(learning_rate = self.learning_rate)
-        self.dice_loss = sm.losses.DiceLoss()
-        self.binxe_loss = tf.keras.losses.BinaryCrossentropy()
 
         self.train_size = train_size
         self.val_size   = val_size
         self.test_size  = test_size
         self.batch_size = batch_size
         self.datadir = datadir
+
+        self.metrics = metrics.ProportionsMetrics(class_weights = class_weights)
 
         self.tr, self.ts, self.val = data.S2LandcoverDataGenerator.split(
                 basedir = self.datadir,
@@ -207,7 +208,7 @@ class GenericUnet:
 
     def get_loss(self, out, p, l):
         if self.loss_name == 'multiclass_proportions_mse':
-            return multiclass_proportions_mse(out, p, self.class_weights)
+            return self.metrics.multiclass_proportions_mse(p, out)
 
         raise ValueError(f"unkown loss '{self.loss_name}'")
 
@@ -238,7 +239,7 @@ class GenericUnet:
                     wandb.log({"train/loss": loss})
 
                     if self.measure_iou():
-                        tr_iou = compute_iou(l, out, self.class_weights)
+                        tr_iou = self.metrics.compute_iou(l, out)
                         wandb.log({"train/iou": tr_iou})
 
                 try:
@@ -255,7 +256,7 @@ class GenericUnet:
                     wandb.log({"val/loss": val_loss})
 
                     if self.measure_iou():
-                        val_iou = compute_iou(val_l, val_out, self.class_weights)
+                        val_iou = self.metrics.compute_iou(val_l, val_out)
                         wandb.log({"val/iou": val_iou})
 
                     wandb.log({'train/mseprops_on_chip': 
