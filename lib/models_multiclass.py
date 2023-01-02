@@ -530,7 +530,7 @@ class PatchClassifierSegmentation(GenericUnet):
                         bias_initializer=tf.keras.initializers.Zeros(),
                         trainable=False)
         probs = tf.reshape(probs, [-1, patch_extr.num_patches, patch_extr.num_patches, len(self.class_weights)])
-        out = tf.keras.layers.UpSampling2D(size=(2, 2))(probs)
+        probs = tf.keras.layers.UpSampling2D(size=(2, 2))(probs)
 
         ones = tf.ones_like(probs)
         out = conv2dt(probs) / conv2dt(ones)
