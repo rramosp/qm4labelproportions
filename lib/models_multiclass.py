@@ -251,29 +251,6 @@ class GenericUnet:
         #out = tf.keras.layers.Softmax(axis=-1)(out)
         return out
 
-    @tf.function
-    def xfit(self, epochs=10, max_steps=np.inf):
-
-        loss = tf.constant(0, tf.float32)
-        for epoch in range(epochs):
-            print (f"\nepoch {epoch}", "loss", loss, flush=True)
-            step_nb = 0
-            for x,(p,l) in pbar(self.tr):
-                #print (f"epoch {epoch} step_nb {step_nb} max_steps {max_steps}, loss {loss}")
-
-                # trim to unet input shape
-                x,l = self.normitem(x,l)
-
-                # compute loss
-                with tf.GradientTape() as t:
-                    out = self.predict(x)
-                    loss = self.get_loss(out,p,l)
-
-                grads = t.gradient(loss, self.model.trainable_variables)
-                #print ([tf.reduce_mean(i) for i in grads])
-                self.opt.apply_gradients(zip(grads, self.model.trainable_variables))
-            print ("end epoch", max_steps)
-
     def fit(self, epochs=10, max_steps=np.inf):
 
         gen_val = iter(self.val) 
@@ -318,9 +295,9 @@ class GenericUnet:
                         wandb.log({"val/iou": val_iou})
 
                     wandb.log({'train/mseprops_on_chip': 
-                                    multiclass_proportions_mse_on_chip(l, out, self.class_weights)})
+                                    self.metrics.multiclass_proportions_mse_on_chip(l, out)})
                     wandb.log({'val/mseprops_on_chip': 
-                                    multiclass_proportions_mse_on_chip(val_l, val_out, self.class_weights)})
+                                    self.metrics.multiclass_proportions_mse_on_chip(val_l, val_out)})
 
 
     def summary_dataset(self, dataset_name):
