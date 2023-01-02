@@ -67,6 +67,40 @@ def compute_iou(y_true, y_pred, class_weights):
     iou = iou_metric(cy_true,  cy_pred)
     return iou
 
+
+def multiclass_proportions_mse(true_proportions, y_pred, class_weights, binarize=False):
+    """
+    computes the mse between proportions on probability predictions (y_pred)
+    and target_proportions, using the class_weights in this instance.
+    
+    y_pred: a tf tensor of shape [batch_size, pixel_size, pixel_size, len(class_ids)] with probability predictions
+    target_proportions: a tf tensor of shape [batch_size, n_classes]
+    binarize: if true converts any probability >0.5 to 1 and any probability <0.5 to 0 using a steep sigmoid
+    
+    returns: a float with mse.
+    """
+    
+    #assert len(y_pred.shape)==4 and y_pred.shape[-1]==len(self.class_ids)
+    #assert len(true_proportions.shape)==2 and true_proportions.shape[-1]==self.n_classes
+    
+    if binarize:            
+        y_pred = tf.sigmoid(50*(y_pred-0.5))
+    
+    # select only the proportions of the specified classes (columns)
+    proportions_selected = tf.gather(true_proportions, list(class_weights.keys()), axis=1)
+
+    # compute the proportions on prediction
+    proportions_y_pred = tf.reduce_mean(y_pred, axis=[1,2])
+
+    # compute mse using class weights
+    r = tf.reduce_mean(
+            tf.reduce_sum(
+                (proportions_selected - proportions_y_pred)**2 ,
+                axis=-1
+            )
+    )
+    return r
+
 class GenericUnet:
 
     def __init__(self, *args, **kwargs):
@@ -208,22 +242,50 @@ class GenericUnet:
 
     def get_loss(self, out, p, l):
         if self.loss_name == 'multiclass_proportions_mse':
-            return self.metrics.multiclass_proportions_mse(p, out)
+            return multiclass_proportions_mse(p, out, self.class_weights)
 
         raise ValueError(f"unkown loss '{self.loss_name}'")
 
     def predict(self, x):
         out = self.model(x)
-        out = tf.keras.layers.Softmax(axis=-1)(out)
+        #out = tf.keras.layers.Softmax(axis=-1)(out)
         return out
 
-    def fit(self, epochs=10):
+    @tf.function
+    def xfit(self, epochs=10, max_steps=np.inf):
+
+        loss = tf.constant(0, tf.float32)
+        for epoch in range(epochs):
+            print (f"\nepoch {epoch}", "loss", loss, flush=True)
+            step_nb = 0
+            for x,(p,l) in pbar(self.tr):
+                #print (f"epoch {epoch} step_nb {step_nb} max_steps {max_steps}, loss {loss}")
+
+                # trim to unet input shape
+                x,l = self.normitem(x,l)
+
+                # compute loss
+                with tf.GradientTape() as t:
+                    out = self.predict(x)
+                    loss = self.get_loss(out,p,l)
+
+                grads = t.gradient(loss, self.model.trainable_variables)
+                #print ([tf.reduce_mean(i) for i in grads])
+                self.opt.apply_gradients(zip(grads, self.model.trainable_variables))
+            print ("end epoch", max_steps)
+
+    def fit(self, epochs=10, max_steps=np.inf):
 
         gen_val = iter(self.val) 
-        
+        loss = 0
         for epoch in range(epochs):
-            print ("\nepoch", epoch, flush=True)
-            for x,(p,l) in pbar(self.tr):
+            print (f"\nepoch {epoch},  loss {loss:.5f}", flush=True)
+            for step_nb,(x,(p,l)) in enumerate(pbar(self.tr)):
+                print (f"step_nb {step_nb} max_steps {max_steps}, loss {loss:.4f}")
+                if step_nb>=max_steps:
+                    print ("breaking")
+                    break
+
                 # trim to unet input shape
                 x,l = self.normitem(x,l)
 
