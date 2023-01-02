@@ -281,10 +281,6 @@ class GenericUnet:
         for epoch in range(epochs):
             print (f"\nepoch {epoch},  loss {loss:.5f}", flush=True)
             for step_nb,(x,(p,l)) in enumerate(pbar(self.tr)):
-                print (f"step_nb {step_nb} max_steps {max_steps}, loss {loss:.4f}")
-                if step_nb>=max_steps:
-                    print ("breaking")
-                    break
 
                 # trim to unet input shape
                 x,l = self.normitem(x,l)
