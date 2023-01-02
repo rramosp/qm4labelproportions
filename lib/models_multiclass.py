@@ -372,7 +372,6 @@ class CustomUnetSegmentation(GenericUnet):
 
     def get_model(self):
         input_shape=(96,96,3)
-        activation='sigmoid'
         # Build U-Net model
         inputs = Input(input_shape)
         s = Lambda(lambda x: x / 255) (inputs)
@@ -425,7 +424,7 @@ class CustomUnetSegmentation(GenericUnet):
         c9 = Dropout(0.1) (c9)
         c9 = Conv2D(16, (3, 3), activation='elu', kernel_initializer='he_normal', padding='same') (c9)
 
-        outputs = Conv2D(len(self.class_weights), (1, 1), activation=activation) (c9)
+        outputs = Conv2D(len(self.class_weights), (1, 1), activation='softmax') (c9)
 
         model = Model(inputs=[inputs], outputs=[outputs])
         
@@ -449,7 +448,7 @@ class SMUnetSegmentation(GenericUnet):
 
         inp = tf.keras.layers.Input(shape=(None, None, 3))
         out = unet(inp)
-        out = tf.keras.layers.Conv2D(len(self.class_weights), (1,1), padding='same', activation='sigmoid')(out)
+        out = tf.keras.layers.Conv2D(len(self.class_weights), (1,1), padding='same', activation='softmax')(out)
         m = tf.keras.models.Model([inp], [out])
         return m
 
@@ -510,7 +509,7 @@ class PatchProportionsRegression(GenericUnet):
         # Apply dropout.
         x = tf.keras.layers.Dropout(rate=self.dropout_rate)(x)
         # Label proportions prediction layer
-        probs = tf.keras.layers.Dense(len(self.class_weights), activation="sigmoid")(x)
+        probs = tf.keras.layers.Dense(len(self.class_weights), activation="softmax")(x)
         out   = tf.reshape(probs, [-1, patch_extr.num_patches, patch_extr.num_patches, len(self.class_weights)])
 
         m = tf.keras.models.Model([inputs], [out])
