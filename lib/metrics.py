@@ -157,6 +157,15 @@ class ProportionsMetrics:
         computes MeanIoU just like https://www.tensorflow.org/api_docs/python/tf/keras/metrics/MeanIoU
         but uses the class weights when averaging per-class IoUs to get a single number to return
         """
+        # resize smallest
+        if y_true.shape[-1]<y_pred.shape[-1]:
+            y_true = tf.image.resize(y_true[..., tf.newaxis], y_pred.shape[1:], method='nearest')[:,:,:,0]
+
+        if y_pred.shape[-1]<y_true.shape[-1]:
+            y_pred = tf.image.resize(y_pred, y_true.shape[1:], method='nearest')
+
+
+
         ious = []
         for i, class_id in enumerate(self.class_ids):
             y_true_ones  = tf.cast(y_true==class_id, tf.float32) 

@@ -242,7 +242,7 @@ class GenericUnet:
 
     def get_loss(self, out, p, l):
         if self.loss_name == 'multiclass_proportions_mse':
-            return multiclass_proportions_mse(p, out, self.class_weights)
+            return self.metrics.multiclass_proportions_mse(p, out)
 
         raise ValueError(f"unkown loss '{self.loss_name}'")
 
