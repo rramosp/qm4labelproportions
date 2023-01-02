@@ -521,7 +521,7 @@ class PatchClassifierSegmentation(GenericUnet):
         # Apply dropout.
         x = tf.keras.layers.Dropout(rate=self.dropout_rate)(x)
         # Label proportions prediction layer
-        probs = tf.keras.layers.Dense(len(self.class_weights), activation="sigmoid")(x)
+        probs = tf.keras.layers.Dense(len(self.class_weights), activation="softmax")(x)
         # Construct image from label proportions
         conv2dt = tf.keras.layers.Conv2DTranspose(filters=len(self.class_weights),
                         kernel_size=self.patch_size,
