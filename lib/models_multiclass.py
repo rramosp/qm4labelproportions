@@ -316,9 +316,9 @@ class GenericUnet:
             out = self.predict(x)
             loss = self.get_loss(out,p,l).numpy()
             if self.measure_iou():
-                iou = compute_iou(l, out, self.class_weights).numpy()
+                iou = self.metrics.compute_iou(l, out).numpy()
 
-            msep =  multiclass_proportions_mse_on_chip(l, out, self.class_weights).numpy()
+            msep =  self.metrics.multiclass_proportions_mse_on_chip(l, out).numpy()
             losses.append(loss)
             if self.measure_iou():
                 ious.append(iou)
