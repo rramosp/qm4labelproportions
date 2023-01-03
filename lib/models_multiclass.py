@@ -526,16 +526,23 @@ class PatchClassifierSegmentation(GenericUnet):
         conv2dt = tf.keras.layers.Conv2DTranspose(filters=len(self.class_weights),
                         kernel_size=self.patch_size,
                         strides=self.pred_strides,
-                        kernel_initializer=tf.keras.initializers.Ones(),
-                        bias_initializer=tf.keras.initializers.Zeros(),
-                        trainable=False)
+                        trainable=True,
+                        activation='softmax')
         probs = tf.reshape(probs, [-1, patch_extr.num_patches, patch_extr.num_patches, len(self.class_weights)])
-        probs = tf.keras.layers.UpSampling2D(size=(2, 2))(probs)
-
-        ones = tf.ones_like(probs)
-        out = conv2dt(probs) / conv2dt(ones)
+        out = conv2dt(probs)
         m = tf.keras.models.Model([inputs], [out])
         return m
+
+        # conv2dt = tf.keras.layers.Conv2DTranspose(filters=len(self.class_weights),
+        #                 kernel_size=self.patch_size,
+        #                 strides=self.pred_strides,
+        #                 kernel_initializer=tf.keras.initializers.Ones(),
+        #                 bias_initializer=tf.keras.initializers.Zeros(),
+        #                 trainable=False)        
+        #ones = tf.ones_like(probs)
+        #out = conv2dt(probs) / conv2dt(ones)
+        #m = tf.keras.models.Model([inputs], [out])
+        #return m
 
     def get_name(self):
         return f"patch_classifier_segm"
