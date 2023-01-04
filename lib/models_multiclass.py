@@ -132,7 +132,7 @@ class GenericUnet:
         if self.measure_iou():
             ious = []
             for i in range(len(y_true)):
-                iou = compute_iou(y_true[i:i+1], y_pred[i:i+1], self.class_weights).numpy()
+                iou = self.metrics.compute_iou(y_true[i:i+1], y_pred[i:i+1]).numpy()
                 ious.append(iou)
 
         #ious = np.r_[[get_iou(class_number=i, y_true=val_l, y_pred=tval_out) for i in range(2)]].mean(axis=0)
