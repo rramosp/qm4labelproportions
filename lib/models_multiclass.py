@@ -24,83 +24,6 @@ def get_sorted_class_weights(class_weights):
 
     return class_ids, class_w
 
-def multiclass_proportions_mse_on_chip(y_true, y_pred, class_weights):
-    k = [tf.reduce_mean(tf.cast(y_true==i, tf.float32), axis=[1,2]) for i in range(12)]
-    proportions_y_true = tf.stack(k, axis=1)
-    return multiclass_proportions_mse(y_pred, proportions_y_true, class_weights)
-
-def multiclass_proportions_mse(y_pred, proportions, class_weights):
-    class_ids, class_w = get_sorted_class_weights(class_weights)
-
-    # select only the proportions of the specified classes (columns)
-    proportions_selected = tf.gather(proportions, class_ids, axis=1)
-
-    # compute the proportions on prediction
-    proportions_y_pred = tf.reduce_mean(y_pred, axis=[1,2])
-
-    # compute mse using class weights
-    r = tf.reduce_mean(
-            tf.reduce_sum(
-                (proportions_selected - proportions_y_pred)**2 * class_w, 
-                axis=-1
-            )
-    )
-    return r
-
-def compute_iou(y_true, y_pred, class_weights):
-    class_ids, class_w = get_sorted_class_weights(class_weights)
-
-    # resize smallest
-    if y_true.shape[-1]<y_pred.shape[-1]:
-        y_true = tf.image.resize(y_true, y_pred.shape[1:], method='nearest')
-
-    if y_pred.shape[-1]<y_true.shape[-1]:
-        y_pred = tf.image.resize(y_pred, y_true.shape[1:], method='nearest')
-    
-    # convert selected class numbers to 0..n for keras MeanIoU to work
-    cy_true = tf.reduce_sum(tf.stack([tf.cast(y_true==class_id, tf.int32)*i for i, class_id in enumerate(class_ids)], axis=-1), axis=-1)   
-    cy_pred = tf.argmax(y_pred, axis=-1)    
-    
-    # compute iou
-    iou_metric = tf.keras.metrics.MeanIoU(num_classes=len(class_weights))
-    iou_metric.reset_states()
-    iou = iou_metric(cy_true,  cy_pred)
-    return iou
-
-
-def multiclass_proportions_mse(true_proportions, y_pred, class_weights, binarize=False):
-    """
-    computes the mse between proportions on probability predictions (y_pred)
-    and target_proportions, using the class_weights in this instance.
-    
-    y_pred: a tf tensor of shape [batch_size, pixel_size, pixel_size, len(class_ids)] with probability predictions
-    target_proportions: a tf tensor of shape [batch_size, n_classes]
-    binarize: if true converts any probability >0.5 to 1 and any probability <0.5 to 0 using a steep sigmoid
-    
-    returns: a float with mse.
-    """
-    
-    #assert len(y_pred.shape)==4 and y_pred.shape[-1]==len(self.class_ids)
-    #assert len(true_proportions.shape)==2 and true_proportions.shape[-1]==self.n_classes
-    
-    if binarize:            
-        y_pred = tf.sigmoid(50*(y_pred-0.5))
-    
-    # select only the proportions of the specified classes (columns)
-    proportions_selected = tf.gather(true_proportions, list(class_weights.keys()), axis=1)
-
-    # compute the proportions on prediction
-    proportions_y_pred = tf.reduce_mean(y_pred, axis=[1,2])
-
-    # compute mse using class weights
-    r = tf.reduce_mean(
-            tf.reduce_sum(
-                (proportions_selected - proportions_y_pred)**2 ,
-                axis=-1
-            )
-    )
-    return r
-
 class GenericUnet:
 
     def __init__(self, *args, **kwargs):
@@ -458,12 +381,14 @@ class PatchProportionsRegression(GenericUnet):
                      patch_size, 
                      pred_strides,
                      num_units,
-                     dropout_rate):
+                     dropout_rate,
+                     activation='softmax'):
         self.input_shape = input_shape
         self.patch_size = patch_size 
         self.pred_strides = pred_strides
         self.num_units = num_units
         self.dropout_rate = dropout_rate
+        self.activation = activation
 
     def get_wandb_config(self):
       w = super().get_wandb_config()
@@ -482,7 +407,7 @@ class PatchProportionsRegression(GenericUnet):
         # Apply dropout.
         x = tf.keras.layers.Dropout(rate=self.dropout_rate)(x)
         # Label proportions prediction layer
-        probs = tf.keras.layers.Dense(len(self.class_weights), activation="softmax")(x)
+        probs = tf.keras.layers.Dense(len(self.class_weights), activation=self.activation)(x)
         out   = tf.reshape(probs, [-1, patch_extr.num_patches, patch_extr.num_patches, len(self.class_weights)])
 
         m = tf.keras.models.Model([inputs], [out])
