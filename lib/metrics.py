@@ -177,7 +177,12 @@ class ProportionsMetrics:
             fp = tf.reduce_sum(y_true_zeros * y_pred_ones)
             fn = tf.reduce_sum(y_true_ones  * y_pred_zeros)
 
-            iou = tp / (tp + fp + fn)
+            if tp.reduce_sum(y_true_ones)>0:
+                iou = tp / (tp + fp + fn)
+            else:
+                # if class is not present in the batch set IoU to 1.
+                iou = 1
+                
             ious.append(iou)
 
         weighted_iou = tf.reduce_sum(tf.convert_to_tensor(ious) * self.class_w)
