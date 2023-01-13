@@ -1,0 +1,12 @@
+# ESRI Landcover dataset
+
+Using landcover tiles from ESRI Sentinel-2 10m LandCover product
+
+- Description: https://www.arcgis.com/home/item.html?id=d3da5dd386d140cf93fc9ecbf8da5e31
+- Map and download: https://www.arcgis.com/apps/instant/media/index.html?appid=fc92d38533d440078f17678ebc20e8e2
+
+# Other datasets to consider
+
+## GEDI L4B Gridded Aboveground Biomass Density, Version 2
+
+https://developers.google.com/earth-engine/datasets/catalog/LARSE_GEDI_GEDI04_B_002
