@@ -12,7 +12,7 @@ from rlxutils import subplots
 import segmentation_models as sm
 import pandas as pd
 import gc
-
+import matplotlib
 
 def mse_proportions_on_chip(y_true, y_pred): 
     return tf.reduce_mean(
@@ -168,7 +168,9 @@ class GenericUnet:
                 plt.ylabel("input rgb")
                 plt.title(f"{self.partitions_id} | {self.loss_name}")
         for ax,i in subplots(len(val_l)):
-            plt.imshow(val_l[i])
+            cmap=matplotlib.colors.ListedColormap([plt.cm.tab20(i) for i in range(12)])
+
+            plt.imshow(val_l[i], cmap=cmap, vmin=0, vmax=12)
             if i==0: plt.ylabel("labels")
             plt.title(f"chip props {chip_props_on_label[i]:.2f}")
 
