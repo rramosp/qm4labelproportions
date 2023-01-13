@@ -1,4 +1,4 @@
-from lib import models_multiclass, metrics
+from . import models_multiclass, metrics
 import numpy as np
 import tensorflow as tf
 
