@@ -451,53 +451,16 @@ class QMPatchSegmentation(models_multiclass.GenericUnet):
             'deep':self.deep}
         return wconfig
 
-    def predict(self, x):
-        return self.model[1](x)
+    def get_trainable_variables(self):
+        if self.deep:
+            return (self.train_model.trainable_variables +
+                    [self.sigma] +
+                    self.deep_model.trainable_variables)
+        else:
+            return (self.train_model.trainable_variables +
+                    [self.sigma])
 
-    def fit(self, epochs=10):
-        gen_val = iter(self.val) 
-        for epoch in range(epochs):
-            print ("\nepoch", epoch, flush=True)
-            losses = []
-            for x,(p,l) in pbar(self.tr):
-                # trim to unet input shape
-                x,l = self.normitem(x,l)
-                p = tf.gather(p, self.metrics.class_ids, axis=1)
-                # compute loss
-                with tf.GradientTape() as t:
-                    out = self.model[0](x)
-                    loss = tf.keras.losses.mse(out,p)
-                if self.deep:
-                    grads = t.gradient(loss, self.model[0].trainable_variables + 
-                                    [self.sigma] + self.deep_model.trainable_variables)
-                    self.opt.apply_gradients(zip(grads, self.model[0].trainable_variables +
-                                                [self.sigma]+ self.deep_model.trainable_variables))
-                else:
-                    grads = t.gradient(loss, self.model[0].trainable_variables + 
-                                    [self.sigma])
-                    self.opt.apply_gradients(zip(grads, self.model[0].trainable_variables +
-                                                [self.sigma]))
-
-                losses.append(loss.numpy())
-            tr_loss = np.mean(losses)
-            losses = []
-            ious = []
-            mseps = []
-            print ("\nvalidation", flush=True)
-            for x, (p,l) in pbar(self.val):
-                x,l = self.normitem(x,l)
-                out = self.predict(x)
-                loss = self.get_loss(out,p,l).numpy()
-                iou = self.metrics.compute_iou(l, out)
-                losses.append(loss)
-                ious.append(iou)
-                mseps.append(self.metrics.multiclass_proportions_mse_on_chip(l, out))
-            wandb.log({"train/loss": tr_loss,
-                       "val/loss": np.mean(losses),
-                       "val/iou": np.mean(ious),
-                       "val/msep": np.mean(mseps)})
-
-    def set_kqm_params(self):
+    def init_model_params(self):
         batch_size_backup = self.tr.batch_size
         self.tr.batch_size = self.n_comp
         self.tr.on_epoch_end()
@@ -518,7 +481,13 @@ class QMPatchSegmentation(models_multiclass.GenericUnet):
         self.tr.on_epoch_end()
         return 
 
-    def get_model(self):
+    '''
+    def get_loss(self, out, p, l):
+        if self.loss_name == 'multiclass_proportions_mse':
+            p = tf.gather(p, self.metrics.class_ids, axis=1)
+            return tf.keras.losses.mse(out,p)
+    '''
+    def get_models(self):
         self.sigma = tf.Variable(self.sigma_ini, dtype=tf.float32, trainable=True)       
         if self.deep:
             # Lenet Model
@@ -553,6 +522,7 @@ class QMPatchSegmentation(models_multiclass.GenericUnet):
         norms_y = tf.expand_dims(tf.linalg.norm(y_v, axis=-1), axis=-1)
         y_v = y_v / norms_y
         probs = tf.einsum('...j,...ji->...i', y_w, y_v ** 2, optimize="optimal")
+        probs = probs[:, tf.newaxis, tf.newaxis, :]
         model_train =  tf.keras.models.Model([inputs], [probs])
 
         # Model for prediction
