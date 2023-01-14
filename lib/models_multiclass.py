@@ -57,7 +57,7 @@ class GenericUnet:
         self.class_weights = class_weights
 
         self.run_name = f"{self.get_name()}-{self.partitions_id}-{self.loss_name}-{datetime.now().strftime('%Y%m%d[%H%M]')}"
-        self.model = self.get_model()
+        self.train_model, self.val_model = self.get_models()
         self.opt = tf.keras.optimizers.Adam(learning_rate = self.learning_rate)
 
         self.train_size = train_size
@@ -83,8 +83,15 @@ class GenericUnet:
             wconfig = self.get_wandb_config()
             wandb.init(project=wandb_project, entity=wandb_entity, 
                         name=self.run_name, config=wconfig)
+        self.init_model_params()
         print ()
         return self
+
+    def init_model_params(self):
+        '''
+        Perform a model parameter initialization if needed
+        '''
+        pass
 
     def empty_caches(self):
         self.tr.empty_cache()
@@ -97,8 +104,8 @@ class GenericUnet:
         return True
 
     def get_wandb_config(self):
-        self.trainable_params = sum(count_params(layer) for layer in self.model.trainable_weights)
-        self.non_trainable_params = sum(count_params(layer) for layer in self.model.non_trainable_weights)
+        self.trainable_params = sum(count_params(layer) for layer in self.train_model.trainable_weights)
+        self.non_trainable_params = sum(count_params(layer) for layer in self.train_model.non_trainable_weights)
         wconfig = {
             "learning_rate": self.opt.learning_rate,
             "batch_size": self.tr.batch_size,
@@ -160,7 +167,7 @@ class GenericUnet:
     def get_name(self):
         raise NotImplementedError()
 
-    def get_model(self):
+    def get_models(self):
         raise NotImplementedError()
 
     def get_loss(self, out, p, l):
@@ -170,57 +177,50 @@ class GenericUnet:
         raise ValueError(f"unkown loss '{self.loss_name}'")
 
     def predict(self, x):
-        out = self.model(x)
+        out = self.val_model(x)
         #out = tf.keras.layers.Softmax(axis=-1)(out)
         return out
 
+    def get_trainable_variables(self):
+        return self.train_model.trainable_variables
+
     def fit(self, epochs=10, max_steps=np.inf):
-
         gen_val = iter(self.val) 
-        loss = 0
+        tr_loss = 0
         for epoch in range(epochs):
-            print (f"\nepoch {epoch},  loss {loss:.5f}", flush=True)
+            print (f"\nepoch {epoch},  loss {tr_loss:.5f}", flush=True)
+            losses = []
             for step_nb,(x,(p,l)) in enumerate(pbar(self.tr)):
-
                 # trim to unet input shape
                 x,l = self.normitem(x,l)
-
                 # compute loss
                 with tf.GradientTape() as t:
-                    out = self.predict(x)
+                    out = self.train_model(x)
                     loss = self.get_loss(out,p,l)
 
-                grads = t.gradient(loss, self.model.trainable_variables)
-                self.opt.apply_gradients(zip(grads, self.model.trainable_variables))
+                grads = t.gradient(loss, self.get_trainable_variables())
+                self.opt.apply_gradients(zip(grads, self.get_trainable_variables()))
+                losses.append(loss.numpy())
+            tr_loss = np.mean(losses)
+            losses = []
+            ious = []
+            mseps = []
+            print ("\nvalidation", flush=True)
+            for x, (p,l) in pbar(self.val):
+                x,l = self.normitem(x,l)
+                out = self.predict(x)
+                loss = self.get_loss(out,p,l).numpy()
+                losses.append(loss)
+                mseps.append(self.metrics.multiclass_proportions_mse_on_chip(l, out))
+                if self.measure_iou():
+                    iou = self.metrics.compute_iou(l, out)
+                    ious.append(iou)
+            if self.wandb_project is not None:
+                wandb.log({"val/loss": np.mean(losses)})
 
-                if self.wandb_project is not None:
-                    wandb.log({"train/loss": loss})
-
-                    if self.measure_iou():
-                        tr_iou = self.metrics.compute_iou(l, out)
-                        wandb.log({"train/iou": tr_iou})
-
-                try:
-                    val_x, (val_p, val_l) = gen_val.__next__()
-                except:
-                    gen_val = iter(self.val) 
-                    val_x, (val_p, val_l) = gen_val.__next__()
-
-                val_x,val_l = self.normitem(val_x,val_l)
-                val_out = self.predict(val_x)
-                val_loss = self.get_loss(val_out,val_p,val_l)
-
-                if self.wandb_project is not None:
-                    wandb.log({"val/loss": val_loss})
-
-                    if self.measure_iou():
-                        val_iou = self.metrics.compute_iou(val_l, val_out)
-                        wandb.log({"val/iou": val_iou})
-
-                    wandb.log({'train/mseprops_on_chip': 
-                                    self.metrics.multiclass_proportions_mse_on_chip(l, out)})
-                    wandb.log({'val/mseprops_on_chip': 
-                                    self.metrics.multiclass_proportions_mse_on_chip(val_l, val_out)})
+                if self.measure_iou():
+                    wandb.log({"val/iou": np.mean(ious)})
+                wandb.log({'val/mseprops_on_chip': np.mean(mseps)})
 
 
     def summary_dataset(self, dataset_name):
@@ -266,7 +266,7 @@ class CustomUnetSegmentation(GenericUnet):
     def get_name(self):
         return "custom_unet"
 
-    def get_model(self):
+    def get_models(self):
         input_shape=(96,96,3)
         # Build U-Net model
         inputs = Input(input_shape)
@@ -324,7 +324,7 @@ class CustomUnetSegmentation(GenericUnet):
 
         model = Model(inputs=[inputs], outputs=[outputs])
         
-        return model
+        return model, model
 
 
 class SMUnetSegmentation(GenericUnet):
@@ -338,7 +338,7 @@ class SMUnetSegmentation(GenericUnet):
       w.update(self.sm_keywords)
       return w
 
-    def get_model(self):
+    def get_models(self):
         unet = model = sm.Unet(input_shape=(None,None,3), 
                                **self.sm_keywords)
 
@@ -346,7 +346,7 @@ class SMUnetSegmentation(GenericUnet):
         out = unet(inp)
         out = tf.keras.layers.Conv2D(len(self.class_weights), (1,1), padding='same', activation='softmax')(out)
         m = tf.keras.models.Model([inp], [out])
-        return m
+        return m, m
 
     def get_name(self):
         return f"{self.backbone}_unet"
@@ -397,7 +397,7 @@ class PatchProportionsRegression(GenericUnet):
                 'num_units':self.num_units})
       return w
 
-    def get_model(self):
+    def get_models(self):
         inputs = tf.keras.layers.Input(shape=self.input_shape)
         # Create patches.
         patch_extr = Patches(self.patch_size, 96, self.pred_strides)
@@ -411,7 +411,7 @@ class PatchProportionsRegression(GenericUnet):
         out   = tf.reshape(probs, [-1, patch_extr.num_patches, patch_extr.num_patches, len(self.class_weights)])
 
         m = tf.keras.models.Model([inputs], [out])
-        return m
+        return m, m
 
     def get_name(self):
         return f"patch_classifier"
@@ -436,7 +436,7 @@ class PatchClassifierSegmentation(GenericUnet):
                 'num_units':self.num_units})
       return w
 
-    def get_model(self):
+    def get_models(self):
         inputs = tf.keras.layers.Input(shape=self.input_shape)
         # Create patches.
         patch_extr = Patches(self.patch_size, 96, self.pred_strides)
@@ -456,7 +456,7 @@ class PatchClassifierSegmentation(GenericUnet):
         probs = tf.reshape(probs, [-1, patch_extr.num_patches, patch_extr.num_patches, len(self.class_weights)])
         out = conv2dt(probs)
         m = tf.keras.models.Model([inputs], [out])
-        return m
+        return m, m
 
         # conv2dt = tf.keras.layers.Conv2DTranspose(filters=len(self.class_weights),
         #                 kernel_size=self.patch_size,
