@@ -6,11 +6,15 @@ import matplotlib.pyplot as plt
 import pandas as pd
 from rlxutils import subplots
 import tensorflow as tf
+import shapely as sh
+import rasterio as rio
+from pyproj.crs import CRS
+import pathlib
+import geopandas as gpd
 
 lc = {'0': 'none', '1': 'water', '2': 'trees', '3': 'not used', '4': 'flooded vegetation', '5': 'crops'
 ,
       '6': 'not used', '7': 'built area', '8': 'bare ground', '9': 'snow/ice', '10': 'clouds', '11': 'rangeland'}
-
 
 class Chipset:
     
@@ -48,6 +52,39 @@ class Chip:
         l = pd.Series(self.label.flatten()).value_counts() / 100**2
         return {i: (l[i] if i in l.index else 0) for i in range(12)}
 
+    def get_polygon(self):
+        """
+        returns a shapely polygon in degrees as lon/lat (epsg 4326)
+        """
+        g = self.data['metadata']['corners']
+        nw_lat, nw_lon = g['nw']
+        se_lat, se_lon = g['se']
+        p = sh.geometry.Polygon([[nw_lon, nw_lat], [se_lon, nw_lat], [se_lon, se_lat], [nw_lon, se_lat], [nw_lon, nw_lat]])
+        return p
+
+    def to_geotiff(self, filename=None):
+        if filename is not None:
+            geotiff_filename = filename
+        else:
+            fpath = pathlib.Path(self.filename)
+            geotiff_filename  = self.filename[:-len(fpath.suffix)] + '.tif'
+            
+        pixels = self.data['chipmean']
+
+        maxy, minx = self.metadata['corners']['nw']
+        miny, maxx = self.metadata['corners']['se']        
+
+        transform = rio.transform.from_origin(minx, maxy, (maxx-minx)/pixels.shape[1], (maxy-miny)/pixels.shape[0])
+
+        new_dataset = rio.open(geotiff_filename, 'w', driver='GTiff',
+                                    height = pixels.shape[0], width = pixels.shape[1],
+                                    count=3, dtype=str(pixels.dtype),
+                                    crs=CRS.from_epsg(4326),
+                                    transform=transform)
+
+        for i in range(3):
+            new_dataset.write(pixels[:,:,i], i+1)
+        new_dataset.close()
 
     def plot(self):
 
@@ -113,7 +150,8 @@ class S2LandcoverDataGenerator(tf.keras.utils.Sequence):
                  batch_size=32, 
                  shuffle=True,
                  cache_size=100,
-                 chips_basedirs=None
+                 chips_basedirs=None,
+                 number_of_classes=12
                  ):
         self.basedir = basedir
         if chips_basedirs is None:
@@ -127,6 +165,7 @@ class S2LandcoverDataGenerator(tf.keras.utils.Sequence):
         self.on_epoch_end()
         self.cache = {}
         self.cache_size = cache_size
+        self.number_of_classes = number_of_classes
         print (f"got {len(self.chips_basedirs):6d} chips on {len(self)} batches. cache size is {self.cache_size}")
 
     def empty_cache(self):
@@ -160,10 +199,21 @@ class S2LandcoverDataGenerator(tf.keras.utils.Sequence):
             return self.cache[chip_filename]
         else:
             chip = Chip(f"{self.basedir}/{chip_filename}")
-            p = chip.label_proportions[f'partitions{self.partitions_id}']
-            p = np.r_[[p[str(i)] if str(i) in p.keys() else 0 for i in range(12)]]    
+            if f'partitions{self.partitions_id}' in chip.label_proportions.keys():
+                p = chip.label_proportions[f'partitions{self.partitions_id}']
+            elif f'partitions_{self.partitions_id}' in chip.label_proportions.keys():
+                k = f'partitions_{self.partitions_id}'
+                if 'proportions' in chip.label_proportions.keys():
+                    p = chip.label_proportions[k]['proportions']
+                else:
+                    p = chip.label_proportions[k]
 
-            r = [chip.chipmean, chip.label, p]
+            else:
+                raise ValueError(f"chip has no label partitions for {self.partitions_id}")
+            p = np.r_[[p[str(i)] if str(i) in p.keys() else 0 for i in range(self.number_of_classes)]]    
+
+            # ensure 100x100 chips
+            r = [chip.chipmean[:100,:100,:], chip.label[:100,:100], p]
             if len(self.cache) < self.cache_size:
                 self.cache[chip_filename] = r
             return r
@@ -174,7 +224,7 @@ class S2LandcoverDataGenerator(tf.keras.utils.Sequence):
         # Initialization
         X = np.empty((self.batch_size, 100, 100, 3), dtype=np.float32)
         labels = np.empty((self.batch_size, 100, 100), dtype=np.int16)
-        partition_proportions = np.empty((self.batch_size, 12), dtype=np.float32)
+        partition_proportions = np.empty((self.batch_size, self.number_of_classes), dtype=np.float32)
 
         # Generate data
         for i, chip_id in enumerate(chips_basedirs_temp):
