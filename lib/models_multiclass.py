@@ -238,10 +238,12 @@ class GenericUnet:
                 min_val_loss = val_loss
                 self.train_model.save_weights(self.run_file_path)
             if self.wandb_project is not None:
-                wandb.log({"val/loss": val_loss})
+                log_dict = {}
+                log_dict["val/loss"] = val_loss
                 if self.measure_iou():
-                    wandb.log({"val/iou": np.mean(ious)})
-                wandb.log({'val/mseprops_on_chip': np.mean(mseps)})
+                    log_dict["val/iou"] = np.mean(ious)
+                log_dict["val/mseprops_on_chip"] = np.mean(mseps)
+                wandb.log(log_dict)
 
 
     def summary_dataset(self, dataset_name):
