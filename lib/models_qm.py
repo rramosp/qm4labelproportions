@@ -428,15 +428,15 @@ class QMPatchSegmentation(models_multiclass.GenericUnet):
     def get_wandb_config(self):
         if self.deep:
             self.trainable_params = sum(count_params(layer) for layer in (
-                self.model[0].trainable_weights + self.deep_model.trainable_weights))
+                self.model_train.trainable_weights + self.deep_model.trainable_weights))
             self.non_trainable_params = sum(count_params(layer) for 
-                layer in ( self.model[0].non_trainable_weights + 
+                layer in ( self.model_train.non_trainable_weights + 
                           self.deep_model.non_trainable_weights))
         else:
             self.trainable_params = sum(count_params(layer) for layer in (
-                self.model[0].trainable_weights))
+                self.model_train.trainable_weights))
             self.non_trainable_params = sum(count_params(layer) for 
-                layer in self.model[0].non_trainable_weights)
+                layer in self.model_train.non_trainable_weights)
             
         wconfig = {
             "learning_rate": self.opt.learning_rate,
