@@ -99,7 +99,7 @@ class GenericUnet:
             wandb.init(project=wandb_project, entity=wandb_entity, 
                         name=self.run_name, config=wconfig)
             self.run_id = wandb.run.id
-            self.run_file_path = os.path.join(self.outdir, self.run.id + ".h5")            
+            self.run_file_path = os.path.join(self.outdir, self.run_id + ".h5")            
         else:
             self.run_file_path = get_next_file_path(self.outdir, "run","h5")
         self.init_model_params()
