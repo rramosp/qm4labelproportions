@@ -122,7 +122,6 @@ class S2LandcoverDataGenerator(tf.keras.utils.Sequence):
         assert not 'chips_basedirs' in kwargs.keys()
 
         np.random.seed(10)
-        chips_basedirs = np.r_[[f for f,subdirs,files in os.walk(basedir) if 'metadata.pkl' in files]]
         cs = Chipset(basedir)
         chips_basedirs = np.r_[cs.files]
         permutation = np.random.permutation(len(chips_basedirs))
@@ -133,7 +132,7 @@ class S2LandcoverDataGenerator(tf.keras.utils.Sequence):
         tr =  chips_basedirs[permutation[:i1]]
         ts =  chips_basedirs[permutation[i1:i2]]
         val = chips_basedirs[permutation[i2:]]
-
+        print (ts)
         # split also the cache sizes
         tr_cache_size = int(cache_size * train_size)
         ts_cache_size = int(cache_size * test_size)
@@ -144,6 +143,41 @@ class S2LandcoverDataGenerator(tf.keras.utils.Sequence):
         val = cls(basedir=basedir, chips_basedirs = val, cache_size=val_cache_size, **kwargs)
 
         return tr, ts, val
+
+    @classmethod
+    def split_per_partition(cls, split_file, partitions_id=None, cache_size=1000, **kwargs):
+        """
+        creates three data loaders according to splits as defined in split_file
+        """
+        assert partitions_id is not None, "must set 'partitions_id'"
+
+        # read split file, and data files
+        splits = pd.read_csv(split_file)
+        datadir = os.path.dirname(split_file)+"/data"
+        files = os.listdir(datadir)
+
+        # select only files which exist for each split
+        split_files = {}
+        for split in ['train', 'test', 'val']:
+            split_identifiers = [i+".pkl" for i in splits[splits[f"split_{partitions_id}"]==split].identifier.values]
+            split_files[split] = list(set(split_identifiers).intersection(files))
+
+        # split also the cache sizes
+        train_size = len(split_files['train'])
+        test_size = len(split_files['test'])
+        val_size = len(split_files['train'])
+        total_size = train_size + test_size + val_size    
+
+        tr_cache_size = int(cache_size * train_size / total_size)
+        ts_cache_size = int(cache_size * test_size / total_size)
+        val_cache_size = cache_size - tr_cache_size - ts_cache_size
+
+        # create dataloader for each split
+        tr = cls(basedir=datadir, chips_basedirs=split_files['train'], cache_size = tr_cache_size, partitions_id = partitions_id, **kwargs)
+        ts = cls(basedir=datadir, chips_basedirs=split_files['test'], cache_size = ts_cache_size, partitions_id = partitions_id, **kwargs)
+        val = cls(basedir=datadir, chips_basedirs=split_files['val'], cache_size = val_cache_size, partitions_id = partitions_id, **kwargs)
+        
+        return tr, ts, val        
             
     def __init__(self, basedir, 
                  partitions_id='5k', 
@@ -235,3 +269,28 @@ class S2LandcoverDataGenerator(tf.keras.utils.Sequence):
             partition_proportions[i,] = p
 
         return X, (partition_proportions, labels)
+
+
+class S2_ESAWorldCover_DataGenerator(S2LandcoverDataGenerator):
+
+    def __init__(self, basedir, **kwargs):
+        if 'number_of_classes' in kwargs.keys() and kwargs['number_of_classes']!=12:
+            raise ValueError("cannot use 'number_of_classes'!=12, since it is fixed in ESAWordCover")
+        kwargs['number_of_classes'] = 12
+        super().__init__(basedir, **kwargs)
+
+    @classmethod
+    def split(cls, basedir, train_size=0.7, test_size=0.3, val_size=0.0, cache_size=1000, **kwargs):
+        if 'number_of_classes' in kwargs.keys():
+            raise ValueError("cannot use 'num_classes', since it is fixed in ESAWordCover")
+
+        kwargs['number_of_classes'] = 12
+        return super().split(basedir=basedir, train_size=train_size, test_size=test_size, val_size=val_size, cache_size=cache_size, **kwargs)
+
+    @classmethod
+    def split_per_partition(cls, split_file, partitions_id=None, cache_size=1000, **kwargs):
+        print (kwargs)
+        if 'number_of_classes' in kwargs.keys():
+            raise ValueError("cannot use 'num_classes', since it is fixed in ESAWordCover")
+        kwargs['number_of_classes'] = 12
+        return super().split_per_partition(split_file=split_file, partitions_id=partitions_id, cache_size=cache_size, **kwargs)
