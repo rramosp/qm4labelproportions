@@ -13,6 +13,17 @@ from rlxutils import subplots
 import segmentation_models as sm
 import pandas as pd
 import gc
+import os
+
+
+def get_next_file_path(path, base_name, ext):
+    i = 1
+    while True:
+        file_name = f"{base_name}{i}.{ext}"
+        file_path = os.path.join(path, file_name)
+        if not os.path.exists(file_path):
+            return file_path
+        i += 1
 
 def get_sorted_class_weights(class_weights):
     # normalize weights to sum up to 1
@@ -35,7 +46,8 @@ class GenericUnet:
         l = l[:,2:-2,2:-2]
         return x,l
 
-    def init_run(self, datadir, 
+    def init_run(self, datadir,
+                 outdir,
                  learning_rate, 
                  batch_size=32, 
                  train_size=.7, 
@@ -65,6 +77,9 @@ class GenericUnet:
         self.test_size  = test_size
         self.batch_size = batch_size
         self.datadir = datadir
+        self.outdir = outdir
+        if not os.path.exists(outdir):
+            os.makedirs(outdir)
 
         self.metrics = metrics.ProportionsMetrics(class_weights = class_weights)
 
@@ -83,6 +98,9 @@ class GenericUnet:
             wconfig = self.get_wandb_config()
             wandb.init(project=wandb_project, entity=wandb_entity, 
                         name=self.run_name, config=wconfig)
+            self.run_file_path = os.path.join(self.outdir, wandb.run.id + ".h5")            
+        else:
+            self.run_file_path = get_next_file_path(self.outdir, "run","h5")
         self.init_model_params()
         print ()
         return self
@@ -185,8 +203,8 @@ class GenericUnet:
         return self.train_model.trainable_variables
 
     def fit(self, epochs=10, max_steps=np.inf):
-        gen_val = iter(self.val) 
         tr_loss = 0
+        min_val_loss = np.inf
         for epoch in range(epochs):
             print (f"\nepoch {epoch},  loss {tr_loss:.5f}", flush=True)
             losses = []
@@ -197,7 +215,6 @@ class GenericUnet:
                 with tf.GradientTape() as t:
                     out = self.train_model(x)
                     loss = self.get_loss(out,p,l)
-
                 grads = t.gradient(loss, self.get_trainable_variables())
                 self.opt.apply_gradients(zip(grads, self.get_trainable_variables()))
                 losses.append(loss.numpy())
@@ -215,9 +232,12 @@ class GenericUnet:
                 if self.measure_iou():
                     iou = self.metrics.compute_iou(l, out)
                     ious.append(iou)
+            val_loss = np.mean(losses)
+            if val_loss < min_val_loss:
+                min_val_loss = val_loss
+                self.train_model.save_weights(self.run_file_path)
             if self.wandb_project is not None:
-                wandb.log({"val/loss": np.mean(losses)})
-
+                wandb.log({"val/loss": val_loss})
                 if self.measure_iou():
                     wandb.log({"val/iou": np.mean(ious)})
                 wandb.log({'val/mseprops_on_chip': np.mean(mseps)})
@@ -256,8 +276,11 @@ class GenericUnet:
         runs summary_dataset over train, val and test
         returns a dataframe with dataset rows and loss/metric columns
         """
+        self.train_model.load_weights(self.run_file_path)
         r = [self.summary_dataset(i) for i in ['train', 'val', 'test']]
         r = pd.DataFrame(r, index = ['train', 'val', 'test'])
+        csv_path = self.run_file_path[:-3] + ".csv"
+        r.to_csv(csv_path)
         return r
 
 
