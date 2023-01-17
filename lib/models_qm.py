@@ -428,15 +428,15 @@ class QMPatchSegmentation(models_multiclass.GenericUnet):
     def get_wandb_config(self):
         if self.deep:
             self.trainable_params = sum(count_params(layer) for layer in (
-                self.model_train.trainable_weights + self.deep_model.trainable_weights))
+                self.train_model.trainable_weights + self.deep_model.trainable_weights))
             self.non_trainable_params = sum(count_params(layer) for 
-                layer in ( self.model_train.non_trainable_weights + 
+                layer in ( self.train_model.non_trainable_weights + 
                           self.deep_model.non_trainable_weights))
         else:
             self.trainable_params = sum(count_params(layer) for layer in (
-                self.model_train.trainable_weights))
+                self.train_model.trainable_weights))
             self.non_trainable_params = sum(count_params(layer) for 
-                layer in self.model_train.non_trainable_weights)
+                layer in self.train_model.non_trainable_weights)
             
         wconfig = {
             "learning_rate": self.opt.learning_rate,
@@ -523,7 +523,7 @@ class QMPatchSegmentation(models_multiclass.GenericUnet):
         y_v = y_v / norms_y
         probs = tf.einsum('...j,...ji->...i', y_w, y_v ** 2, optimize="optimal")
         probs = probs[:, tf.newaxis, tf.newaxis, :]
-        model_train =  tf.keras.models.Model([inputs], [probs])
+        train_model =  tf.keras.models.Model([inputs], [probs])
 
         # Model for prediction
         patch_extr = Patches(self.patch_size, 96, self.pred_strides)
@@ -551,8 +551,8 @@ class QMPatchSegmentation(models_multiclass.GenericUnet):
             out_i = conv2dt(probs[..., i:i + 1]) / conv2dt(ones)
             outs.append(out_i)
         out = tf.concat(outs, axis=3)
-        model_predict = tf.keras.models.Model([inputs], [out])
-        return model_train, model_predict
+        predict_model = tf.keras.models.Model([inputs], [out])
+        return train_model, predict_model
 
     def get_name(self):
         return f"KQM_classifier"
