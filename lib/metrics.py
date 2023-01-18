@@ -152,7 +152,7 @@ class ProportionsMetrics:
         p_true = self.get_class_proportions_on_masks(y_true, dense=False)
         return self.multiclass_proportions_mse (p_true, y_pred, binarize=binarize)
     
-    def compute_iou(self, y_true, y_pred):
+    def compute_iou_batch(self, y_true, y_pred):
         """
         computes MeanIoU just like https://www.tensorflow.org/api_docs/python/tf/keras/metrics/MeanIoU
         but uses the class weights when averaging per-class IoUs to get a single number to return
@@ -164,9 +164,8 @@ class ProportionsMetrics:
         if y_pred.shape[-1]<y_true.shape[-1]:
             y_pred = tf.image.resize(y_pred, y_true.shape[1:], method='nearest')
 
-
-
-        ious = []
+        weighted_iou = 0
+        weights_used = []
         for i, class_id in enumerate(self.class_ids):
             y_true_ones  = tf.cast(y_true==class_id, tf.float32) 
             y_pred_ones  = tf.cast(tf.argmax(y_pred, axis=-1)==i, tf.float32)
@@ -177,16 +176,21 @@ class ProportionsMetrics:
             fp = tf.reduce_sum(y_true_zeros * y_pred_ones)
             fn = tf.reduce_sum(y_true_ones  * y_pred_zeros)
 
+            # only compute IoU for classes with pixels on y_true
             if tf.reduce_sum(y_true_ones)>0:
-                iou = tp / (tp + fp + fn)
-            else:
-                # if class is not present in the batch set IoU to 1.
-                iou = 1
-
-            ious.append(iou)
-
-        weighted_iou = tf.reduce_sum(tf.convert_to_tensor(ious) * self.class_w)
+                weighted_iou += self.class_w[i] * tp / (tp + fp + fn)
+                weights_used.append(self.class_w[i])
+                 
+        # normalize by the weights of the classes used (sum=1 if all classes are used)
+        weighted_iou = weighted_iou / sum(weights_used)
         return weighted_iou
+
+    def compute_iou(self, y_true, y_pred):
+        per_item_iou = []
+        for i in range(len(y_true)):
+            per_item_iou.append(self.compute_iou(y_true[i:i+1], y_pred[i:i+1]).numpy())
+
+        return tf.reduce_mean(per_item_iou)        
 
     def show_y_pred(self, y_pred):
         for n in range(len(y_pred)):
