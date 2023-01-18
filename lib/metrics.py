@@ -157,27 +157,28 @@ class ProportionsMetrics:
         computes MeanIoU just like https://www.tensorflow.org/api_docs/python/tf/keras/metrics/MeanIoU
         but uses the class weights when averaging per-class IoUs to get a single number to return
         """
+        
         # resize smallest
-        if y_true.shape[-1]<y_pred.shape[-1]:
+        if y_true.shape[1]<y_pred.shape[1]:
             y_true = tf.image.resize(y_true[..., tf.newaxis], y_pred.shape[1:], method='nearest')[:,:,:,0]
 
-        if y_pred.shape[-1]<y_true.shape[-1]:
+        if y_pred.shape[1]<y_true.shape[1]:
             y_pred = tf.image.resize(y_pred, y_true.shape[1:], method='nearest')
-
+        
         weighted_iou = 0
         weights_used = []
         for i, class_id in enumerate(self.class_ids):
-            y_true_ones  = tf.cast(y_true==class_id, tf.float32) 
-            y_pred_ones  = tf.cast(tf.argmax(y_pred, axis=-1)==i, tf.float32)
-            y_true_zeros = tf.cast(y_true!=class_id, tf.float32) 
-            y_pred_zeros = tf.cast(tf.argmax(y_pred, axis=-1)!=i, tf.float32)
+            y_true_ones  = y_true==class_id 
+            y_pred_ones  = np.argmax(y_pred, axis=-1)==i
+            y_true_zeros = y_true!=class_id 
+            y_pred_zeros = np.argmax(y_pred, axis=-1)!=i
 
-            tp = tf.reduce_sum(y_true_ones  * y_pred_ones)
-            fp = tf.reduce_sum(y_true_zeros * y_pred_ones)
-            fn = tf.reduce_sum(y_true_ones  * y_pred_zeros)
+            tp = np.sum(y_true_ones  * y_pred_ones)
+            fp = np.sum(y_true_zeros * y_pred_ones)
+            fn = np.sum(y_true_ones  * y_pred_zeros)
 
             # only compute IoU for classes with pixels on y_true
-            if tf.reduce_sum(y_true_ones)>0:
+            if np.sum(y_true_ones)>0:
                 weighted_iou += self.class_w[i] * tp / (tp + fp + fn)
                 weights_used.append(self.class_w[i])
                  
