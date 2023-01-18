@@ -11,7 +11,7 @@ class ProportionsMetrics:
     def __init__(self, class_weights, n_classes=12):
         self.class_weights = class_weights
         self.get_sorted_class_weights()
-        self.n_classes = n_classes
+        self.n_classes = len(self.class_weights)
         
     def get_sorted_class_weights(self):
         """
