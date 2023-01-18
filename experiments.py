@@ -1,5 +1,5 @@
 import psutil
-from lib import data
+from .lib import data
 
 
 def run_experiment(datadir,
