@@ -191,7 +191,7 @@ class ProportionsMetrics:
         for i in range(len(y_true)):
             per_item_iou.append(self.compute_iou_batch(y_true[i:i+1], y_pred[i:i+1]))
 
-        return tf.reduce_mean(per_item_iou)        
+        return np.mean(per_item_iou)        
 
     def show_y_pred(self, y_pred):
         for n in range(len(y_pred)):

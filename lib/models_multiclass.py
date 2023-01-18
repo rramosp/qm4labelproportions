@@ -159,7 +159,7 @@ class GenericUnet:
         if self.measure_iou():
             ious = []
             for i in range(len(y_true)):
-                iou = self.metrics.compute_iou(y_true[i:i+1], y_pred[i:i+1]).numpy()
+                iou = self.metrics.compute_iou(y_true[i:i+1], y_pred[i:i+1])
                 ious.append(iou)
 
         #ious = np.r_[[get_iou(class_number=i, y_true=val_l, y_pred=tval_out) for i in range(2)]].mean(axis=0)
@@ -263,7 +263,7 @@ class GenericUnet:
             out = self.predict(x)
             loss = self.get_loss(out,p,l).numpy()
             if self.measure_iou():
-                iou = self.metrics.compute_iou(l, out).numpy()
+                iou = self.metrics.compute_iou(l, out)
 
             msep =  self.metrics.multiclass_proportions_mse_on_chip(l, out).numpy()
             losses.append(loss)
