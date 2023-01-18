@@ -120,7 +120,7 @@ class GenericUnet:
         gc.collect()
 
 
-    def measure_iou(self):
+    def measure_accuracy(self):
         return True
 
     def get_wandb_config(self):
@@ -156,13 +156,12 @@ class GenericUnet:
         chip_props_on_label = [i.mean() for i in val_l>0.5]
         y_true = val_l
         y_pred = tval_out
-        if self.measure_iou():
-            ious = []
+        if self.measure_accuracy():
+            accs = []
             for i in range(len(y_true)):
-                iou = self.metrics.compute_iou(y_true[i:i+1], y_pred[i:i+1])
-                ious.append(iou)
+                acc = self.metrics.compute_mean_class_accuracy(y_true[i:i+1], y_pred[i:i+1])
+                accs.append(acc)
 
-        #ious = np.r_[[get_iou(class_number=i, y_true=val_l, y_pred=tval_out) for i in range(2)]].mean(axis=0)
         for ax,i in subplots(len(val_x)):
             plt.imshow(val_x[i])        
             if i==0: 
@@ -177,8 +176,8 @@ class GenericUnet:
         for ax,i in subplots(len(val_out)):
             plt.imshow(tval_out[i].argmax(axis=-1))
             title = f"chip props {chip_props_on_out[i]:.2f}"
-            if self.measure_iou():
-                title += f"  iou {ious[i]:.2f}"
+            if self.measure_accuracy():
+                title += f"  acc {accs[i]:.2f}"
             plt.title(title)
             if i==0: plt.ylabel("thresholded output")
 
@@ -222,7 +221,7 @@ class GenericUnet:
                 losses.append(loss.numpy())
             tr_loss = np.mean(losses)
             losses = []
-            ious = []
+            accs = []
             mseps = []
             print ("\nvalidation", flush=True)
             for x, (p,l) in pbar(self.val):
@@ -231,9 +230,9 @@ class GenericUnet:
                 loss = self.get_loss(out,p,l).numpy()
                 losses.append(loss)
                 mseps.append(self.metrics.multiclass_proportions_mse_on_chip(l, out))
-                if self.measure_iou():
-                    iou = self.metrics.compute_iou(l, out)
-                    ious.append(iou)
+                if self.measure_accuracy():
+                    acc = self.metrics.compute_mean_class_accuracy(l, out)
+                    accs.append(accs)
             val_loss = np.mean(losses)
             if val_loss < min_val_loss:
                 min_val_loss = val_loss
@@ -241,8 +240,8 @@ class GenericUnet:
             if self.wandb_project is not None:
                 log_dict = {}
                 log_dict["val/loss"] = val_loss
-                if self.measure_iou():
-                    log_dict["val/iou"] = np.mean(ious)
+                if self.measure_accuracy():
+                    log_dict["val/acc"] = np.mean(accs)
                 log_dict["val/mseprops_on_chip"] = np.mean(mseps)
                 wandb.log(log_dict)
 
@@ -257,21 +256,21 @@ class GenericUnet:
         else:
             dataset = self.ts
 
-        losses, ious, mseps = [], [], []
+        losses, accs, mseps = [], [], []
         for x, (p,l) in pbar(dataset):
             x,l = self.normitem(x,l)
             out = self.predict(x)
             loss = self.get_loss(out,p,l).numpy()
-            if self.measure_iou():
-                iou = self.metrics.compute_iou(l, out)
+            if self.measure_accuracy():
+                acc = self.metrics.compute_mean_class_accuracy(l, out)
 
             msep =  self.metrics.multiclass_proportions_mse_on_chip(l, out).numpy()
             losses.append(loss)
-            if self.measure_iou():
-                ious.append(iou)
+            if self.measure_accuracy():
+                accs.append(acc)
             mseps.append(msep)
-        if self.measure_iou():
-            return {'loss': np.mean(losses), 'iou': np.mean(ious), 'mseprops_on_chip': np.mean(mseps)}
+        if self.measure_accuracy():
+            return {'loss': np.mean(losses), 'accuracy': np.mean(accs), 'mseprops_on_chip': np.mean(mseps)}
         else:
             return {'loss': np.mean(losses), 'mseprops_on_chip': np.mean(mseps)}
             

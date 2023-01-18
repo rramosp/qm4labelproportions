@@ -193,6 +193,31 @@ class ProportionsMetrics:
 
         return np.mean(per_item_iou)        
 
+    def compute_mean_class_accuracy(self, y_true, y_pred):
+        """
+        computes the accuracy per class and uses the class weights 
+        when averaging per-class accuracies to get a single number to return
+        """
+        # resize smallest
+        if y_true.shape[-1]<y_pred.shape[-1]:
+            y_true = tf.image.resize(y_true[..., tf.newaxis], y_pred.shape[1:], method='nearest')[:,:,:,0]
+
+        if y_pred.shape[-1]<y_true.shape[-1]:
+            y_pred = tf.image.resize(y_pred, y_true.shape[1:], method='nearest')
+        
+        # choose class with highest probability for prediction
+        y_pred = tf.argmax(y_pred, axis=-1)
+
+        # compute accuracy per class
+        accs = []
+        for i, class_id in enumerate(self.class_ids):
+            acc = tf.reduce_mean( tf.cast((y_true==class_id)  == (y_pred==i)  , tf.float32) )
+            accs.append(acc)
+
+        weighted_accuracy = tf.reduce_sum(tf.convert_to_tensor(accs) * self.class_w)
+        return weighted_accuracy
+
+
     def show_y_pred(self, y_pred):
         for n in range(len(y_pred)):
             for ax,i in subplots(len(self.class_ids), usizex=4):
