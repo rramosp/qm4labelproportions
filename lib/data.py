@@ -132,7 +132,7 @@ class S2LandcoverDataGenerator(tf.keras.utils.Sequence):
         tr =  chips_basedirs[permutation[:i1]]
         ts =  chips_basedirs[permutation[i1:i2]]
         val = chips_basedirs[permutation[i2:]]
-        print (ts)
+        
         # split also the cache sizes
         tr_cache_size = int(cache_size * train_size)
         ts_cache_size = int(cache_size * test_size)
