@@ -72,8 +72,12 @@ def get_utm_crs(lon, lat):
 _gee_get_tile_progress_period = 100
 def _get_tile(i,gee_tile):
     # helper function to download gee tiles
-    gee_tile.get_tile()
-
+    try:
+        gee_tile.get_tile()
+    except Exception as e:
+        print (f"\n----error----\ntile {gee_tile.identifier}\n------")
+        print (e)
+        
     if i%_gee_get_tile_progress_period==0:
         print (f"{i} ", end="", flush=True)
 

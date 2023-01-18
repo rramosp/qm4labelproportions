@@ -49,6 +49,7 @@ class GenericUnet:
     def init_run(self, datadir,
                  outdir,
                  learning_rate, 
+                 data_generator_class = data.S2LandcoverDataGenerator,
                  batch_size=32, 
                  train_size=.7, 
                  val_size=0.2, 
@@ -83,7 +84,7 @@ class GenericUnet:
 
         self.metrics = metrics.ProportionsMetrics(class_weights = class_weights)
 
-        self.tr, self.ts, self.val = data.S2LandcoverDataGenerator.split(
+        self.tr, self.ts, self.val = data_generator_class.split(
                 basedir = self.datadir,
                 partitions_id = partitions_id,
                 batch_size = self.batch_size,
