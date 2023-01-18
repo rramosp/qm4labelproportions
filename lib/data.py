@@ -132,7 +132,7 @@ class S2LandcoverDataGenerator(tf.keras.utils.Sequence):
         tr =  chips_basedirs[permutation[:i1]]
         ts =  chips_basedirs[permutation[i1:i2]]
         val = chips_basedirs[permutation[i2:]]
-        
+
         # split also the cache sizes
         tr_cache_size = int(cache_size * train_size)
         ts_cache_size = int(cache_size * test_size)
@@ -237,7 +237,7 @@ class S2LandcoverDataGenerator(tf.keras.utils.Sequence):
                 p = chip.label_proportions[f'partitions{self.partitions_id}']
             elif f'partitions_{self.partitions_id}' in chip.label_proportions.keys():
                 k = f'partitions_{self.partitions_id}'
-                if 'proportions' in chip.label_proportions.keys():
+                if 'proportions' in chip.label_proportions[k].keys():
                     p = chip.label_proportions[k]['proportions']
                 else:
                     p = chip.label_proportions[k]
@@ -293,4 +293,28 @@ class S2_ESAWorldCover_DataGenerator(S2LandcoverDataGenerator):
         if 'number_of_classes' in kwargs.keys():
             raise ValueError("cannot use 'num_classes', since it is fixed in ESAWordCover")
         kwargs['number_of_classes'] = 12
+        return super().split_per_partition(split_file=split_file, partitions_id=partitions_id, cache_size=cache_size, **kwargs)
+
+class S2_EUCrop_DataGenerator(S2LandcoverDataGenerator):
+
+    def __init__(self, basedir, **kwargs):
+        if 'number_of_classes' in kwargs.keys() and kwargs['number_of_classes']!=23:
+            raise ValueError("cannot use 'number_of_classes'!=12, since it is fixed in ESAWordCover")
+        kwargs['number_of_classes'] = 23
+        super().__init__(basedir, **kwargs)
+
+    @classmethod
+    def split(cls, basedir, train_size=0.7, test_size=0.3, val_size=0.0, cache_size=1000, **kwargs):
+        if 'number_of_classes' in kwargs.keys():
+            raise ValueError("cannot use 'num_classes', since it is fixed in ESAWordCover")
+
+        kwargs['number_of_classes'] = 23
+        return super().split(basedir=basedir, train_size=train_size, test_size=test_size, val_size=val_size, cache_size=cache_size, **kwargs)
+
+    @classmethod
+    def split_per_partition(cls, split_file, partitions_id=None, cache_size=1000, **kwargs):
+        print (kwargs)
+        if 'number_of_classes' in kwargs.keys():
+            raise ValueError("cannot use 'num_classes', since it is fixed in ESAWordCover")
+        kwargs['number_of_classes'] = 23
         return super().split_per_partition(split_file=split_file, partitions_id=partitions_id, cache_size=cache_size, **kwargs)

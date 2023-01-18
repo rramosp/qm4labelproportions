@@ -232,7 +232,7 @@ class GenericUnet:
                 mseps.append(self.metrics.multiclass_proportions_mse_on_chip(l, out))
                 if self.measure_accuracy():
                     acc = self.metrics.compute_mean_class_accuracy(l, out)
-                    accs.append(accs)
+                    accs.append(acc)
             val_loss = np.mean(losses)
             if val_loss < min_val_loss:
                 min_val_loss = val_loss
