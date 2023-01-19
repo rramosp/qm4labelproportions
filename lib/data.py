@@ -122,7 +122,6 @@ class S2LandcoverDataGenerator(tf.keras.utils.Sequence):
         assert not 'chips_basedirs' in kwargs.keys()
 
         np.random.seed(10)
-        chips_basedirs = np.r_[[f for f,subdirs,files in os.walk(basedir) if 'metadata.pkl' in files]]
         cs = Chipset(basedir)
         chips_basedirs = np.r_[cs.files]
         permutation = np.random.permutation(len(chips_basedirs))
@@ -144,14 +143,48 @@ class S2LandcoverDataGenerator(tf.keras.utils.Sequence):
         val = cls(basedir=basedir, chips_basedirs = val, cache_size=val_cache_size, **kwargs)
 
         return tr, ts, val
+
+    @classmethod
+    def split_per_partition(cls, split_file, partitions_id=None, cache_size=1000, **kwargs):
+        """
+        creates three data loaders according to splits as defined in split_file
+        """
+        assert partitions_id is not None, "must set 'partitions_id'"
+
+        # read split file, and data files
+        splits = pd.read_csv(split_file)
+        datadir = os.path.dirname(split_file)+"/data"
+        files = os.listdir(datadir)
+
+        # select only files which exist for each split
+        split_files = {}
+        for split in ['train', 'test', 'val']:
+            split_identifiers = [i+".pkl" for i in splits[splits[f"split_{partitions_id}"]==split].identifier.values]
+            split_files[split] = list(set(split_identifiers).intersection(files))
+
+        # split also the cache sizes
+        train_size = len(split_files['train'])
+        test_size = len(split_files['test'])
+        val_size = len(split_files['train'])
+        total_size = train_size + test_size + val_size    
+
+        tr_cache_size = int(cache_size * train_size / total_size)
+        ts_cache_size = int(cache_size * test_size / total_size)
+        val_cache_size = cache_size - tr_cache_size - ts_cache_size
+
+        # create dataloader for each split
+        tr = cls(basedir=datadir, chips_basedirs=split_files['train'], cache_size = tr_cache_size, partitions_id = partitions_id, **kwargs)
+        ts = cls(basedir=datadir, chips_basedirs=split_files['test'], cache_size = ts_cache_size, partitions_id = partitions_id, **kwargs)
+        val = cls(basedir=datadir, chips_basedirs=split_files['val'], cache_size = val_cache_size, partitions_id = partitions_id, **kwargs)
+        
+        return tr, ts, val        
             
     def __init__(self, basedir, 
                  partitions_id='5k', 
                  batch_size=32, 
                  shuffle=True,
                  cache_size=100,
-                 chips_basedirs=None,
-                 number_of_classes=12
+                 chips_basedirs=None
                  ):
         self.basedir = basedir
         if chips_basedirs is None:
@@ -165,8 +198,11 @@ class S2LandcoverDataGenerator(tf.keras.utils.Sequence):
         self.on_epoch_end()
         self.cache = {}
         self.cache_size = cache_size
-        self.number_of_classes = number_of_classes
+        self.number_of_classes = self.get_number_of_classes()
         print (f"got {len(self.chips_basedirs):6d} chips on {len(self)} batches. cache size is {self.cache_size}")
+
+    def get_number_of_classes(self):
+        return 12
 
     def empty_cache(self):
         self.cache = {}
@@ -203,7 +239,7 @@ class S2LandcoverDataGenerator(tf.keras.utils.Sequence):
                 p = chip.label_proportions[f'partitions{self.partitions_id}']
             elif f'partitions_{self.partitions_id}' in chip.label_proportions.keys():
                 k = f'partitions_{self.partitions_id}'
-                if 'proportions' in chip.label_proportions.keys():
+                if 'proportions' in chip.label_proportions[k].keys():
                     p = chip.label_proportions[k]['proportions']
                 else:
                     p = chip.label_proportions[k]
@@ -235,3 +271,14 @@ class S2LandcoverDataGenerator(tf.keras.utils.Sequence):
             partition_proportions[i,] = p
 
         return X, (partition_proportions, labels)
+
+
+class S2_ESAWorldCover_DataGenerator(S2LandcoverDataGenerator):
+
+    def get_number_of_classes(self):
+        return 12
+
+class S2_EUCrop_DataGenerator(S2LandcoverDataGenerator):
+
+    def get_number_of_classes(self):
+        return 23

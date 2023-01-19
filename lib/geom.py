@@ -25,6 +25,8 @@ from skimage import exposure
 from joblib import Parallel, delayed
 from rlxutils import mParallel
 from skimage.io import imread
+from joblib import Parallel, delayed
+from rlxutils import mParallel
 import re
 
 def get_region_hash(region):
@@ -61,17 +63,66 @@ def get_utm_crs(lon, lat):
             north_lat_degree=lat,
         ),
     )
+    if len(utm_crs_list)==0:
+        raise ValueError(f"could not get utm for lon/lat: {lon}, {lat}")
+        
     utm_crs = CRS.from_epsg(utm_crs_list[0].code)
     return utm_crs
 
 _gee_get_tile_progress_period = 100
 def _get_tile(i,gee_tile):
     # helper function to download gee tiles
-    gee_tile.get_tile()
+    try:
+        gee_tile.get_tile()
+    except Exception as e:
+        print (f"\n----error----\ntile {gee_tile.identifier}\n------")
+        print (e)
 
     if i%_gee_get_tile_progress_period==0:
         print (f"{i} ", end="", flush=True)
 
+
+def align_to_lonlat(geometry):
+    """
+    aligns a rectangle so that sides have constant lat or lon. this is
+    required by GEE, since unaligned geometries produce null pixels on the borders.
+    geometry: a rectangle (shapely polygon with 5 coords) in epsg4326 
+    """
+    epsg4326 = CRS.from_epsg(4326)
+
+    if not 'boundary' in dir(geometry):
+        raise ValueError("can only align Polygons")
+
+    coords = np.r_[geometry.boundary.coords]
+    if len(coords)!=5:
+        raise ValueError("can only align rectangles (with 5 coords)")
+
+    clon, clat = list(geometry.centroid.coords)[0]
+    utm = get_utm_crs(clon, clat)
+
+    geometrym = gpd.GeoSeries([geometry], crs=epsg4326).to_crs(utm).values[0]
+    coordsm = np.r_[geometrym.boundary.coords]
+
+    # assume the size lengths to the the observed maximum
+    sizex, sizey = np.abs((coordsm[1:]-coordsm[:-1])).max(axis=0)
+
+    # measure how many meters per degree in lon and lat
+    lon0,lat0 = list(gpd.GeoSeries([sh.geometry.Point([clon, clat])], crs=epsg4326).to_crs(utm).values[0].coords)[0]
+    lon1,lat1 = list(gpd.GeoSeries([sh.geometry.Point([clon+0.001, clat])], crs=epsg4326).to_crs(utm).values[0].coords)[0]
+    lon2,lat2 = list(gpd.GeoSeries([sh.geometry.Point([clon, clat+0.001])], crs=epsg4326).to_crs(utm).values[0].coords)[0]
+
+    meters_per_degree_lon = (lon1-lon0) * 1000
+    meters_per_degree_lat = (lat2-lat0) * 1000
+    delta_degrees_lon =  sizex/2 / meters_per_degree_lon
+    delta_degrees_lat =  sizey/2 / meters_per_degree_lat
+
+    aligned =  sh.geometry.Polygon([[clon-delta_degrees_lon, clat-delta_degrees_lat], 
+                                    [clon-delta_degrees_lon, clat+delta_degrees_lat],
+                                    [clon+delta_degrees_lon, clat+delta_degrees_lat],
+                                    [clon+delta_degrees_lon, clat-delta_degrees_lat],
+                                    [clon-delta_degrees_lon, clat-delta_degrees_lat]])
+
+    return aligned
 
 class PartitionSet:
     
@@ -121,21 +172,34 @@ class PartitionSet:
         self.loaded_from_file = False
         return self
         
-    def make_random_partitions(self, max_rectangle_size, random_variance=0.1):
+    def make_random_partitions(self, max_rectangle_size, random_variance=0.1, n_jobs=5):
         """
         makes random rectangular tiles with max_rectangle_size as maximum side length expressed in meters.
         stores result as a geopandas dataframe in self.data
         """
         assert self.data is None, "cannot make partitions over existing data"
         
-        # reproject to an appropriate crs with meter units
-                
+        # cut off region, assuming region_utm is expressed in meters
         parts = katana(self.region_utm, threshold=max_rectangle_size, random_variance=random_variance)
+
+        # reproject to epsg 4326
         self.data = gpd.GeoDataFrame({
                                       'geometry': parts, 
                                       'area_km2': [i.area/1e6 for i in parts]
                                       },
                                     crs = self.utm_crs).to_crs(self.epsg4326)
+
+        # align geometries to lonlat
+        def f(part):
+            try:
+                aligned_part = align_to_lonlat(part)
+            except Exception as e:
+                aligned_part = part
+            return aligned_part
+
+        parts = mParallel(n_jobs=n_jobs, verbose=30)(delayed(f)(part) for part in self.data.geometry.values)
+        self.data.geometry = parts
+
         self.data['identifier'] =  [get_region_hash(i) for i in self.data.geometry]
         return self
         
@@ -182,7 +246,9 @@ class PartitionSet:
                       pixels_lonlat=None, 
                       meters_per_pixel=None,
                       remove_saturated_or_null = False,
-                      enhance_images = None):
+                      enhance_images = None,
+                      dtype = None,
+                      skip_if_exists = False):
         r = []
         for g,i in zip(self.data.geometry.values, self.data.identifier.values):
             r.append(GEETile(image_collection=image_collection,
@@ -193,7 +259,9 @@ class PartitionSet:
                             pixels_lonlat = pixels_lonlat,
                             meters_per_pixel = meters_per_pixel,
                             remove_saturated_or_null = remove_saturated_or_null,
-                            enhance_images = enhance_images)
+                            enhance_images = enhance_images,
+                            dtype = dtype,
+                            skip_if_exists = skip_if_exists)
                     )
         return r        
         
@@ -207,7 +275,8 @@ class PartitionSet:
                            enhance_images = None,
                            max_downloads=None, 
                            shuffle=True,
-                           exists_ok = False):
+                           skip_if_exists = False,
+                           dtype = None):
 
         """
         downloads in parallel tiles from GEE. See GEETile below for parameters info.
@@ -221,7 +290,7 @@ class PartitionSet:
         
         dest_dir = os.path.splitext(self.origin_file)[0]+ "/" + image_collection_name
 
-        if not exists_ok and os.path.exists(dest_dir):
+        if not skip_if_exists and os.path.exists(dest_dir):
             raise ValueError(f"destination folder {dest_dir} already exists")
         
         os.makedirs(dest_dir, exist_ok=True)
@@ -232,7 +301,9 @@ class PartitionSet:
                                     pixels_lonlat = pixels_lonlat, 
                                     meters_per_pixel = meters_per_pixel,
                                     remove_saturated_or_null = remove_saturated_or_null,
-                                    enhance_images = enhance_images)
+                                    enhance_images = enhance_images,
+                                    dtype = dtype, 
+                                    skip_if_exists = skip_if_exists)
 
         if shuffle:
             gtiles = np.random.permutation(gtiles)
@@ -315,9 +386,106 @@ class PartitionSet:
         see Partition.compute_cross_proportions below
         """
         parts = self.get_partitions()
-        proportions = [{'partition_id': part.identifier,
-                         'proportions': part.compute_cross_proportions('landcover', other_partitionset)} for part in pbar(parts)]
+        proportions = []
+        for part in pbar(parts):
+            cross_proportions, identifier = part.compute_cross_proportions(image_collection_name, other_partitionset)
+            proportions.append({'partition_id': identifier, 
+                                'proportions': cross_proportions})
         self.data[f"{image_collection_name}_proportions_at_{other_partitionset.partitions_name}"] = proportions
+        self.save()
+
+    def split(self, nbands, angle, train_pct, test_pct, val_pct, split_col_name='split'):
+        
+        """
+        splits the geometries in train, test, val by creating spatial bands
+        and assigning each band to train, test or val according to the pcts specified.
+        
+        nbands: the number of bands
+        angle: the angle with which bands are created (in [-pi/2, pi/2])
+        train_pct, test_pct, val_pct: the pcts of bands for each kind,
+                bands of the same kind are put together and alternating
+                as much as possible.
+        """
+        if angle<-np.pi/2 or angle>np.pi/2:
+            raise ValueError("angle must be between 0 and pi/2")
+            
+        p = self
+        coords = np.r_[[np.r_[i.envelope.boundary.coords].mean(axis=0) for i in p.data.geometry]]
+
+        cmin = coords.min(axis=0)
+        cmax = coords.max(axis=0)
+        crng = cmax - cmin
+
+        if not np.allclose(train_pct + test_pct + val_pct, 1, atol=1e-3):
+            raise ValueError("percentages must add up to one")
+
+        min_pct = np.min([i for i in [train_pct, test_pct, val_pct] if i!=0])
+        bands_train = int(np.round(train_pct/min_pct,0))
+        bands_test  = int(np.round(test_pct/min_pct,0))
+        bands_val   = int(np.round(val_pct/min_pct,0))
+
+        if bands_train + bands_test + bands_val > nbands:
+            raise ValueError(f"not enough bands for specified percentages. increase nbands to at least {bands_train + bands_test + bands_val}")
+        
+        if np.abs(angle)<np.pi/4:
+            plon, plat = np.abs(angle)/(np.pi/4), 1
+        else:
+            plon, plat = np.sign(angle), (np.pi/2-np.abs(angle))/(np.pi/4)
+        
+        ncoords = (coords - cmin)/crng
+
+        if angle<0:
+            ncoords = 1-ncoords
+        
+        # find the factor that matches the desired number of bands
+        for k in np.linspace(0.1,50,10000):
+            band_id = ((plon*ncoords[:,0] + plat*ncoords[:,1])/(k/nbands)).astype(int)
+            band_id = band_id - np.min(band_id)
+            if len(np.unique(band_id))==nbands:
+                break
+
+        bands_ids = np.sort(np.unique(band_id))
+
+        splits = ['train']*bands_train + ['test']*bands_test + ['val']*bands_val
+        splits = (splits * (len(bands_ids)//len(splits) + 1))[:len(bands_ids)]
+
+        band_split_map = {band_id: split for band_id, split in zip(bands_ids, splits)}
+
+        split = [band_split_map[i] for i in band_id]
+
+        self.data[split_col_name] = split
+
+        
+    def split_per_partitions(self, nbands, angle, train_pct, test_pct, val_pct, image_collection_name, other_partitions_id):
+        """
+        splits the geometries (as in 'split'), but modifies the result keeping together 
+        in the same split all geometries within the same partition.
+        
+        must have previously run 'add_cross_proportions'.
+        """
+        self.split(nbands=nbands, angle=angle, 
+                train_pct=train_pct, 
+                test_pct=test_pct, 
+                val_pct=val_pct, split_col_name='tmp_split')
+        
+        # gather the id of the other partitions
+        self.data['tmp_partition_id'] =  [i['partition_id'] \
+                                        for i in self.data[f"{image_collection_name}_proportions_at_{other_partitions_id}"].values]
+
+        # group the splits and get the most frequent one
+        self.data[f'split_{other_partitions_id}'] = self.data.groupby('tmp_partition_id')[['tmp_split']]\
+                                                    .transform(lambda x: pd.Series(x).value_counts().index[0])
+        
+        self.data.drop('tmp_partition_id', axis=1, inplace=True)
+        self.data.drop('tmp_split', axis=1, inplace=True)
+
+    def save_splits(self):
+        # save the split into a separate file for fast access
+        fname = os.path.splitext(self.origin_file)[0] + "_splits.csv"
+        splits_df = self.data[[c for c in self.data.columns if ('split' in c and c!='split_nb') or c=='identifier']]
+        splits_df.to_csv(fname, index=False)
+        print (f"all splits saved to {fname}")
+
         self.save()
 
     @classmethod
@@ -358,12 +526,20 @@ class Partition:
         class proportions are computed by (1) obtaining the intersecting partitions on the
         other partitionset, (2) combining the proportions in the intersecting partitions by
         weighting them according to the intersection area with this geometry
+        
+        returns: a list of proportions, the id of the geometry in "other_partitionset" with greater contribution
         """
         t = other_partitionset
         relevant = t.data[[i.intersects(self.geometry) for i in t.data.geometry.values]]
         w = np.r_[[self.geometry.intersection(i).area/self.geometry.area for i in relevant.geometry]]
         cross_proportions = dict ((pd.DataFrame(list(relevant[f"{image_collection_name}_proportions"].values)) * w.reshape(-1,1) ).sum(axis=0))
-        return cross_proportions
+
+        if len(w)>0:
+            largest_other_partition_id = relevant.identifier.values[np.argmax(w)]
+        else:
+            largest_other_partition_id = -1
+
+        return cross_proportions, largest_other_partition_id
 
     def compute_proportions_by_interesection(self, other_partitions):
         pass        
@@ -379,7 +555,9 @@ class GEETile:
                  pixels_lonlat=None, 
                  identifier=None,
                  remove_saturated_or_null = False,
-                 enhance_images = None):
+                 enhance_images = None,
+                 dtype = None,
+                 skip_if_exists = True):
         """
         region: shapely geometry in epsg 4326 lon/lat
         dest_dir: folder to store downloaded tile from GEE
@@ -403,6 +581,8 @@ class GEETile:
         self.file_prefix = file_prefix
         self.remove_saturated_or_null = remove_saturated_or_null
         self.enhance_images = enhance_images
+        self.dtype = dtype
+        self.skip_if_exists = skip_if_exists
 
 
         if identifier is None:
@@ -418,6 +598,15 @@ class GEETile:
     @retry(tries=10, delay=1, backoff=2)
     def get_tile(self):
 
+        # check if should skip
+        ext = 'tif'
+        outdir = os.path.abspath(self.dest_dir)
+        filename    = f"{outdir}/{self.file_prefix}{self.identifier}.{ext}"
+
+        if self.skip_if_exists and os.path.exists(filename):
+            return
+
+
         # get appropriate utm crs for this region to measure stuff in meters 
         lon, lat = list(self.region.envelope.boundary.coords)[0]
         utm_crs = get_utm_crs(lon, lat)
@@ -430,7 +619,12 @@ class GEETile:
 
         # build image request
         dims = f"{self.pixels_lon}x{self.pixels_lat}"
-        rectangle = ee.Geometry.Polygon(list(self.region.envelope.boundary.coords)) 
+
+        try:
+            rectangle = ee.Geometry.Polygon(list(self.region.boundary.coords)) 
+        except:
+            # in case multipolygon, or mutipart or other shapely geometries without a boundary
+            rectangle = ee.Geometry.Polygon(list(self.region.envelope.boundary.coords)) 
 
         url = self.image_collection.getDownloadURL(
             {
@@ -446,13 +640,10 @@ class GEETile:
         if r.status_code != 200:
             r.raise_for_status()
 
-        ext = 'tif'
-        outdir = os.path.abspath(self.dest_dir)
-        filename    = f"{outdir}/{self.file_prefix}{self.identifier}.{ext}"
         with open(filename, 'wb') as outfile:
             shutil.copyfileobj(r.raw, outfile)
 
-        # reopen tiff to mask out region
+        # reopen tiff to mask out region and set image type
         with rasterio.open(filename) as src:
             out_image, out_transform = rasterio.mask.mask(src, [self.region], crop=True)
             out_meta = src.meta
@@ -461,6 +652,10 @@ class GEETile:
                          "height": out_image.shape[1],
                          "width": out_image.shape[2],
                          "transform": out_transform})
+
+        if self.dtype is not None:
+            out_image = out_image.astype(self.dtype)
+            out_meta['dtype'] = self.dtype
 
         with rasterio.open(filename, "w", **out_meta) as dest:
             dest.write(out_image)  

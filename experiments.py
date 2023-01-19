@@ -1,4 +1,5 @@
 import psutil
+from .lib import data
 
 
 def run_experiment(datadir,
@@ -13,7 +14,8 @@ def run_experiment(datadir,
                    learning_rate=0.0001,
                    class_weights={2: 1, 11:1},
                    wproject=None,
-                   wentity=None
+                   wentity=None,
+                   data_generator_class = data.S2LandcoverDataGenerator
                   ):
     print ("XXXX", loss, "XXXX") 
     print ("\n---------", partitions_id, "------------")
@@ -30,7 +32,8 @@ def run_experiment(datadir,
                 partitions_id = partitions_id,
                 wandb_entity = wentity,
                 cache_size = cache_size, 
-                class_weights = class_weights)
+                class_weights = class_weights,
+                data_generator_class = data_generator_class)
     print ("-----", psutil.virtual_memory())
     pcs.fit(epochs=epochs)
     pcs.plot_val_sample(10);

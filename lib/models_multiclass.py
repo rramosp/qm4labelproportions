@@ -49,6 +49,7 @@ class GenericUnet:
     def init_run(self, datadir,
                  outdir,
                  learning_rate, 
+                 data_generator_class = data.S2LandcoverDataGenerator,
                  batch_size=32, 
                  train_size=.7, 
                  val_size=0.2, 
@@ -58,7 +59,8 @@ class GenericUnet:
                  wandb_entity = 'rramosp',
                  partitions_id = 'aschips',
                  cache_size = 10000,
-                 class_weights = {2: 1, 11:1}):
+                 class_weights = None
+                ):
 
         self.learning_rate = learning_rate
         self.loss_name = loss
@@ -68,9 +70,6 @@ class GenericUnet:
         self.wandb_entity = wandb_entity
         self.class_weights = class_weights
 
-        self.run_name = f"{self.get_name()}-{self.partitions_id}-{self.loss_name}-{datetime.now().strftime('%Y%m%d[%H%M]')}"
-        self.train_model, self.val_model = self.get_models()
-        self.opt = tf.keras.optimizers.Adam(learning_rate = self.learning_rate)
 
         self.train_size = train_size
         self.val_size   = val_size
@@ -81,9 +80,7 @@ class GenericUnet:
         if not os.path.exists(outdir):
             os.makedirs(outdir)
 
-        self.metrics = metrics.ProportionsMetrics(class_weights = class_weights)
-
-        self.tr, self.ts, self.val = data.S2LandcoverDataGenerator.split(
+        self.tr, self.ts, self.val = data_generator_class.split(
                 basedir = self.datadir,
                 partitions_id = partitions_id,
                 batch_size = self.batch_size,
@@ -93,6 +90,20 @@ class GenericUnet:
                 cache_size = cache_size,
                 shuffle = True                                             
             )
+
+        if self.class_weights is None:
+            nclasses = self.tr.number_of_classes
+            self.class_weights = {i:1/nclasses for i in range(nclasses)}
+
+        self.run_name = f"{self.get_name()}-{self.partitions_id}-{self.loss_name}-{datetime.now().strftime('%Y%m%d[%H%M]')}"
+        self.train_model, self.val_model = self.get_models()
+        self.opt = tf.keras.optimizers.Adam(learning_rate = self.learning_rate)
+
+        self.metrics = metrics.ProportionsMetrics(class_weights = class_weights, number_of_classes=self.tr.number_of_classes)
+
+        # if there are no class weights, assume equal weight for all classes
+        # as defined in the dataloader
+
 
         if wandb_project is not None:
             wconfig = self.get_wandb_config()
@@ -119,7 +130,7 @@ class GenericUnet:
         gc.collect()
 
 
-    def measure_iou(self):
+    def measure_accuracy(self):
         return True
 
     def get_wandb_config(self):
@@ -149,19 +160,18 @@ class GenericUnet:
         return val_x, val_p, val_l, val_out
 
     def plot_val_sample(self, n=10):
-        val_x, val_p, val_l, val_out = self.get_val_sample()
+        val_x, val_p, val_l, val_out = self.get_val_sample(n=n)
         tval_out = (val_out>0.5).astype(int)
         chip_props_on_out = [i.mean() for i in val_out>0.5]
         chip_props_on_label = [i.mean() for i in val_l>0.5]
         y_true = val_l
         y_pred = tval_out
-        if self.measure_iou():
-            ious = []
+        if self.measure_accuracy():
+            accs = []
             for i in range(len(y_true)):
-                iou = self.metrics.compute_iou(y_true[i:i+1], y_pred[i:i+1]).numpy()
-                ious.append(iou)
+                acc = self.metrics.compute_accuracy(y_true[i:i+1], y_pred[i:i+1])
+                accs.append(acc)
 
-        #ious = np.r_[[get_iou(class_number=i, y_true=val_l, y_pred=tval_out) for i in range(2)]].mean(axis=0)
         for ax,i in subplots(len(val_x)):
             plt.imshow(val_x[i])        
             if i==0: 
@@ -176,8 +186,8 @@ class GenericUnet:
         for ax,i in subplots(len(val_out)):
             plt.imshow(tval_out[i].argmax(axis=-1))
             title = f"chip props {chip_props_on_out[i]:.2f}"
-            if self.measure_iou():
-                title += f"  iou {ious[i]:.2f}"
+            if self.measure_accuracy():
+                title += f"  acc {accs[i]:.2f}"
             plt.title(title)
             if i==0: plt.ylabel("thresholded output")
 
@@ -221,7 +231,7 @@ class GenericUnet:
                 losses.append(loss.numpy())
             tr_loss = np.mean(losses)
             losses = []
-            ious = []
+            accs = []
             mseps = []
             print ("\nvalidation", flush=True)
             for x, (p,l) in pbar(self.val):
@@ -230,9 +240,9 @@ class GenericUnet:
                 loss = self.get_loss(out,p,l).numpy()
                 losses.append(loss)
                 mseps.append(self.metrics.multiclass_proportions_mse_on_chip(l, out))
-                if self.measure_iou():
-                    iou = self.metrics.compute_iou(l, out)
-                    ious.append(iou)
+                if self.measure_accuracy():
+                    acc = self.metrics.compute_accuracy(l, out)
+                    accs.append(acc)
             val_loss = np.mean(losses)
             if val_loss < min_val_loss:
                 min_val_loss = val_loss
@@ -240,8 +250,8 @@ class GenericUnet:
             if self.wandb_project is not None:
                 log_dict = {}
                 log_dict["val/loss"] = val_loss
-                if self.measure_iou():
-                    log_dict["val/iou"] = np.mean(ious)
+                if self.measure_accuracy():
+                    log_dict["val/acc"] = np.mean(accs)
                 log_dict["val/mseprops_on_chip"] = np.mean(mseps)
                 wandb.log(log_dict)
 
@@ -256,21 +266,21 @@ class GenericUnet:
         else:
             dataset = self.ts
 
-        losses, ious, mseps = [], [], []
+        losses, accs, mseps = [], [], []
         for x, (p,l) in pbar(dataset):
             x,l = self.normitem(x,l)
             out = self.predict(x)
             loss = self.get_loss(out,p,l).numpy()
-            if self.measure_iou():
-                iou = self.metrics.compute_iou(l, out).numpy()
+            if self.measure_accuracy():
+                acc = self.metrics.compute_accuracy(l, out)
 
             msep =  self.metrics.multiclass_proportions_mse_on_chip(l, out).numpy()
             losses.append(loss)
-            if self.measure_iou():
-                ious.append(iou)
+            if self.measure_accuracy():
+                accs.append(acc)
             mseps.append(msep)
-        if self.measure_iou():
-            return {'loss': np.mean(losses), 'iou': np.mean(ious), 'mseprops_on_chip': np.mean(mseps)}
+        if self.measure_accuracy():
+            return {'loss': np.mean(losses), 'accuracy': np.mean(accs), 'mseprops_on_chip': np.mean(mseps)}
         else:
             return {'loss': np.mean(losses), 'mseprops_on_chip': np.mean(mseps)}
             
