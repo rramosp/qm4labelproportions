@@ -8,13 +8,13 @@ class ProportionsMetrics:
     class containing methods for label proportions metrics and losses
     """
 
-    def __init__(self, class_weights, n_classes=None):
+    def __init__(self, class_weights, number_of_classes=None):
         self.class_weights = class_weights
         self.get_sorted_class_weights()
-        if n_classes is None:
-            self.n_classes = len(self.class_weights)
+        if number_of_classes is None:
+            self.number_of_classes = len(self.class_weights)
         else:
-            self.n_classes = n_classes
+            self.number_of_classes = number_of_classes
         
     def get_sorted_class_weights(self):
         """
@@ -68,12 +68,12 @@ class ProportionsMetrics:
         obtains the class proportions in a label mask.
         y_true: int array of shape [batch_size, pixel_size, pixel_size]
         if dense==True: returns an array [batch_size, len(class_ids)]
-        else          : returns an array [batch_size, n_classes]
+        else          : returns an array [batch_size, number_of_classes]
         """
         if dense:
             return np.r_[[[np.mean(y_true[i]==class_id)  for class_id in self.class_ids] for i in range(len(y_true))]].astype(np.float32)
         else:
-            return np.r_[[[np.mean(y_true[i]==class_id)  for class_id in range(self.n_classes)] for i in range(len(y_true))]].astype(np.float32)
+            return np.r_[[[np.mean(y_true[i]==class_id)  for class_id in range(self.number_of_classes)] for i in range(len(y_true))]].astype(np.float32)
 
     def get_class_proportions_on_probabilities(self, y_pred):
         """
@@ -117,14 +117,14 @@ class ProportionsMetrics:
         and target_proportions, using the class_weights in this instance.
         
         y_pred: a tf tensor of shape [batch_size, pixel_size, pixel_size, len(class_ids)] with probability predictions
-        target_proportions: a tf tensor of shape [batch_size, n_classes]
+        target_proportions: a tf tensor of shape [batch_size, number_of_classes]
         binarize: if true converts any probability >0.5 to 1 and any probability <0.5 to 0 using a steep sigmoid
         
         returns: a float with mse.
         """
         
         assert len(y_pred.shape)==4 and y_pred.shape[-1]==len(self.class_ids)
-        assert len(true_proportions.shape)==2 and true_proportions.shape[-1]==self.n_classes
+        assert len(true_proportions.shape)==2 and true_proportions.shape[-1]==self.number_of_classes
         
         if binarize:            
             y_pred = tf.sigmoid(50*(y_pred-0.5))
