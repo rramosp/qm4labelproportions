@@ -8,10 +8,15 @@ class ProportionsMetrics:
     class containing methods for label proportions metrics and losses
     """
 
-    def __init__(self, class_weights, n_classes=12):
+    def __init__(self, class_weights, number_of_classes=None):
         self.class_weights = class_weights
+        if class_weights is None:
+            self.class_weights = {i:1/number_of_classes for i in range(number_of_classes)}
+        if number_of_classes is None:
+            self.number_of_classes = len(self.class_weights)
+        else:
+            self.number_of_classes = number_of_classes
         self.get_sorted_class_weights()
-        self.n_classes = n_classes
         
     def get_sorted_class_weights(self):
         """
@@ -65,12 +70,12 @@ class ProportionsMetrics:
         obtains the class proportions in a label mask.
         y_true: int array of shape [batch_size, pixel_size, pixel_size]
         if dense==True: returns an array [batch_size, len(class_ids)]
-        else          : returns an array [batch_size, n_classes]
+        else          : returns an array [batch_size, number_of_classes]
         """
         if dense:
             return np.r_[[[np.mean(y_true[i]==class_id)  for class_id in self.class_ids] for i in range(len(y_true))]].astype(np.float32)
         else:
-            return np.r_[[[np.mean(y_true[i]==class_id)  for class_id in range(self.n_classes)] for i in range(len(y_true))]].astype(np.float32)
+            return np.r_[[[np.mean(y_true[i]==class_id)  for class_id in range(self.number_of_classes)] for i in range(len(y_true))]].astype(np.float32)
 
     def get_class_proportions_on_probabilities(self, y_pred):
         """
@@ -114,14 +119,14 @@ class ProportionsMetrics:
         and target_proportions, using the class_weights in this instance.
         
         y_pred: a tf tensor of shape [batch_size, pixel_size, pixel_size, len(class_ids)] with probability predictions
-        target_proportions: a tf tensor of shape [batch_size, n_classes]
+        target_proportions: a tf tensor of shape [batch_size, number_of_classes]
         binarize: if true converts any probability >0.5 to 1 and any probability <0.5 to 0 using a steep sigmoid
         
         returns: a float with mse.
         """
         
         assert len(y_pred.shape)==4 and y_pred.shape[-1]==len(self.class_ids)
-        assert len(true_proportions.shape)==2 and true_proportions.shape[-1]==self.n_classes
+        assert len(true_proportions.shape)==2 and true_proportions.shape[-1]==self.number_of_classes
         
         if binarize:            
             y_pred = tf.sigmoid(50*(y_pred-0.5))
@@ -157,27 +162,28 @@ class ProportionsMetrics:
         computes MeanIoU just like https://www.tensorflow.org/api_docs/python/tf/keras/metrics/MeanIoU
         but uses the class weights when averaging per-class IoUs to get a single number to return
         """
+        
         # resize smallest
-        if y_true.shape[-1]<y_pred.shape[-1]:
+        if y_true.shape[1]<y_pred.shape[1]:
             y_true = tf.image.resize(y_true[..., tf.newaxis], y_pred.shape[1:], method='nearest')[:,:,:,0]
 
-        if y_pred.shape[-1]<y_true.shape[-1]:
+        if y_pred.shape[1]<y_true.shape[1]:
             y_pred = tf.image.resize(y_pred, y_true.shape[1:], method='nearest')
-
+        
         weighted_iou = 0
         weights_used = []
         for i, class_id in enumerate(self.class_ids):
-            y_true_ones  = tf.cast(y_true==class_id, tf.float32) 
-            y_pred_ones  = tf.cast(tf.argmax(y_pred, axis=-1)==i, tf.float32)
-            y_true_zeros = tf.cast(y_true!=class_id, tf.float32) 
-            y_pred_zeros = tf.cast(tf.argmax(y_pred, axis=-1)!=i, tf.float32)
+            y_true_ones  = y_true==class_id 
+            y_pred_ones  = np.argmax(y_pred, axis=-1)==i
+            y_true_zeros = y_true!=class_id 
+            y_pred_zeros = np.argmax(y_pred, axis=-1)!=i
 
-            tp = tf.reduce_sum(y_true_ones  * y_pred_ones)
-            fp = tf.reduce_sum(y_true_zeros * y_pred_ones)
-            fn = tf.reduce_sum(y_true_ones  * y_pred_zeros)
+            tp = np.sum(y_true_ones  * y_pred_ones)
+            fp = np.sum(y_true_zeros * y_pred_ones)
+            fn = np.sum(y_true_ones  * y_pred_zeros)
 
             # only compute IoU for classes with pixels on y_true
-            if tf.reduce_sum(y_true_ones)>0:
+            if np.sum(y_true_ones)>0:
                 weighted_iou += self.class_w[i] * tp / (tp + fp + fn)
                 weights_used.append(self.class_w[i])
                  
@@ -188,9 +194,45 @@ class ProportionsMetrics:
     def compute_iou(self, y_true, y_pred):
         per_item_iou = []
         for i in range(len(y_true)):
-            per_item_iou.append(self.compute_iou_batch(y_true[i:i+1], y_pred[i:i+1]).numpy())
+            per_item_iou.append(self.compute_iou_batch(y_true[i:i+1], y_pred[i:i+1]))
 
-        return tf.reduce_mean(per_item_iou)        
+        return np.mean(per_item_iou)        
+
+    def compute_accuracy(self, y_true, y_pred):
+        """
+        accuracy is computed by summing up the true positives of each class present in the y_true
+        and dividing by the total number of pixels.
+        
+        formally:
+        Li: number of total pixels in y_true belonging to class i
+        Pi: number of class i pixels in y_true correctly predicted in y_pred (true positives)
+        Wi: weight of class i
+                  
+           acc =  (sum_i Wi*Pi)/ (sum_i Wi*Li)
+        
+        """
+        # resize smallest
+        if y_true.shape[-1]<y_pred.shape[-1]:
+            y_true = tf.image.resize(y_true[..., tf.newaxis], y_pred.shape[1:], method='nearest')[:,:,:,0]
+
+        if y_pred.shape[-1]<y_true.shape[-1]:
+            y_pred = tf.image.resize(y_pred, y_true.shape[1:], method='nearest')
+        
+        # choose class with highest probability for prediction
+        y_pred = tf.argmax(y_pred, axis=-1)
+
+        # compute accuracy per class
+        hits = []
+        total_pixels = []
+        for i, class_id in enumerate(self.class_ids):
+            nb_pixels_correct = tf.reduce_sum( tf.cast(y_true==class_id, tf.float32) * tf.cast(y_pred==i, tf.float32) ) * self.class_w[i]
+            nb_pixels_in_class = tf.reduce_sum( tf.cast((y_true==class_id), tf.float32) )  * self.class_w[i]
+            hits.append(nb_pixels_correct)
+            total_pixels.append(nb_pixels_in_class)
+
+        weighted_accuracy = tf.reduce_sum(hits) / tf.reduce_sum(total_pixels)
+        return weighted_accuracy
+
 
     def show_y_pred(self, y_pred):
         for n in range(len(y_pred)):

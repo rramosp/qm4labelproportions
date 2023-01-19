@@ -77,7 +77,7 @@ def _get_tile(i,gee_tile):
     except Exception as e:
         print (f"\n----error----\ntile {gee_tile.identifier}\n------")
         print (e)
-        
+
     if i%_gee_get_tile_progress_period==0:
         print (f"{i} ", end="", flush=True)
 
@@ -388,7 +388,7 @@ class PartitionSet:
         parts = self.get_partitions()
         proportions = []
         for part in pbar(parts):
-            cross_proportions, identifier = part.compute_cross_proportions('landcover', other_partitionset)
+            cross_proportions, identifier = part.compute_cross_proportions(image_collection_name, other_partitionset)
             proportions.append({'partition_id': identifier, 
                                 'proportions': cross_proportions})
         self.data[f"{image_collection_name}_proportions_at_{other_partitionset.partitions_name}"] = proportions
