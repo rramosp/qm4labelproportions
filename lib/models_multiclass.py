@@ -70,9 +70,6 @@ class GenericUnet:
         self.wandb_entity = wandb_entity
         self.class_weights = class_weights
 
-        self.run_name = f"{self.get_name()}-{self.partitions_id}-{self.loss_name}-{datetime.now().strftime('%Y%m%d[%H%M]')}"
-        self.train_model, self.val_model = self.get_models()
-        self.opt = tf.keras.optimizers.Adam(learning_rate = self.learning_rate)
 
         self.train_size = train_size
         self.val_size   = val_size
@@ -96,7 +93,11 @@ class GenericUnet:
 
         if self.class_weights is None:
             nclasses = self.tr.number_of_classes
-            self.class_weights = {i:1/nclasses for i in range(len(nclasses))}
+            self.class_weights = {i:1/nclasses for i in range(nclasses)}
+
+        self.run_name = f"{self.get_name()}-{self.partitions_id}-{self.loss_name}-{datetime.now().strftime('%Y%m%d[%H%M]')}"
+        self.train_model, self.val_model = self.get_models()
+        self.opt = tf.keras.optimizers.Adam(learning_rate = self.learning_rate)
 
         self.metrics = metrics.ProportionsMetrics(class_weights = class_weights, number_of_classes=self.tr.number_of_classes)
 
