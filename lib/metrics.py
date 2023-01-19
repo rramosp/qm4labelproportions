@@ -8,10 +8,13 @@ class ProportionsMetrics:
     class containing methods for label proportions metrics and losses
     """
 
-    def __init__(self, class_weights, n_classes=12):
+    def __init__(self, class_weights, n_classes=None):
         self.class_weights = class_weights
         self.get_sorted_class_weights()
-        self.n_classes = len(self.class_weights)
+        if n_classes is None:
+            self.n_classes = len(self.class_weights)
+        else:
+            self.n_classes = n_classes
         
     def get_sorted_class_weights(self):
         """
@@ -193,10 +196,18 @@ class ProportionsMetrics:
 
         return np.mean(per_item_iou)        
 
-    def compute_mean_class_accuracy(self, y_true, y_pred):
+    def compute_accuracy(self, y_true, y_pred):
         """
-        computes the accuracy per class and uses the class weights 
-        when averaging per-class accuracies to get a single number to return
+        accuracy is computed by summing up the true positives of each class present in the y_true
+        and dividing by the total number of pixels.
+        
+        formally:
+        Li: number of total pixels in y_true belonging to class i
+        Pi: number of class i pixels in y_true correctly predicted in y_pred (true positives)
+        Wi: weight of class i
+                  
+           acc =  (sum_i Wi*Pi)/ (sum_i Wi*Li)
+        
         """
         # resize smallest
         if y_true.shape[-1]<y_pred.shape[-1]:
@@ -209,12 +220,15 @@ class ProportionsMetrics:
         y_pred = tf.argmax(y_pred, axis=-1)
 
         # compute accuracy per class
-        accs = []
+        hits = []
+        total_pixels = []
         for i, class_id in enumerate(self.class_ids):
-            acc = tf.reduce_mean( tf.cast((y_true==class_id)  == (y_pred==i)  , tf.float32) )
-            accs.append(acc)
+            nb_pixels_correct = tf.reduce_sum( tf.cast(y_true==class_id, tf.float32) * tf.cast(y_pred==i, tf.float32) ) * self.class_w[i]
+            nb_pixels_in_class = tf.reduce_sum( tf.cast((y_true==class_id), tf.float32) )  * self.class_w[i]
+            hits.append(nb_pixels_correct)
+            total_pixels.append(nb_pixels_in_class)
 
-        weighted_accuracy = tf.reduce_sum(tf.convert_to_tensor(accs) * self.class_w)
+        weighted_accuracy = tf.reduce_sum(hits) / tf.reduce_sum(total_pixels)
         return weighted_accuracy
 
 

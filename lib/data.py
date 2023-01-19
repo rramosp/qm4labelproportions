@@ -184,8 +184,7 @@ class S2LandcoverDataGenerator(tf.keras.utils.Sequence):
                  batch_size=32, 
                  shuffle=True,
                  cache_size=100,
-                 chips_basedirs=None,
-                 number_of_classes=12
+                 chips_basedirs=None
                  ):
         self.basedir = basedir
         if chips_basedirs is None:
@@ -199,8 +198,11 @@ class S2LandcoverDataGenerator(tf.keras.utils.Sequence):
         self.on_epoch_end()
         self.cache = {}
         self.cache_size = cache_size
-        self.number_of_classes = number_of_classes
+        self.number_of_classes = self.get_number_of_classes()
         print (f"got {len(self.chips_basedirs):6d} chips on {len(self)} batches. cache size is {self.cache_size}")
+
+    def get_number_of_classes(self):
+        return 12
 
     def empty_cache(self):
         self.cache = {}
@@ -273,48 +275,10 @@ class S2LandcoverDataGenerator(tf.keras.utils.Sequence):
 
 class S2_ESAWorldCover_DataGenerator(S2LandcoverDataGenerator):
 
-    def __init__(self, basedir, **kwargs):
-        if 'number_of_classes' in kwargs.keys() and kwargs['number_of_classes']!=12:
-            raise ValueError("cannot use 'number_of_classes'!=12, since it is fixed in ESAWordCover")
-        kwargs['number_of_classes'] = 12
-        super().__init__(basedir, **kwargs)
-
-    @classmethod
-    def split(cls, basedir, train_size=0.7, test_size=0.3, val_size=0.0, cache_size=1000, **kwargs):
-        if 'number_of_classes' in kwargs.keys():
-            raise ValueError("cannot use 'num_classes', since it is fixed in ESAWordCover")
-
-        kwargs['number_of_classes'] = 12
-        return super().split(basedir=basedir, train_size=train_size, test_size=test_size, val_size=val_size, cache_size=cache_size, **kwargs)
-
-    @classmethod
-    def split_per_partition(cls, split_file, partitions_id=None, cache_size=1000, **kwargs):
-        print (kwargs)
-        if 'number_of_classes' in kwargs.keys():
-            raise ValueError("cannot use 'num_classes', since it is fixed in ESAWordCover")
-        kwargs['number_of_classes'] = 12
-        return super().split_per_partition(split_file=split_file, partitions_id=partitions_id, cache_size=cache_size, **kwargs)
+    def get_number_of_classes(self):
+        return 12
 
 class S2_EUCrop_DataGenerator(S2LandcoverDataGenerator):
 
-    def __init__(self, basedir, **kwargs):
-        if 'number_of_classes' in kwargs.keys() and kwargs['number_of_classes']!=23:
-            raise ValueError("cannot use 'number_of_classes'!=12, since it is fixed in ESAWordCover")
-        kwargs['number_of_classes'] = 23
-        super().__init__(basedir, **kwargs)
-
-    @classmethod
-    def split(cls, basedir, train_size=0.7, test_size=0.3, val_size=0.0, cache_size=1000, **kwargs):
-        if 'number_of_classes' in kwargs.keys():
-            raise ValueError("cannot use 'num_classes', since it is fixed in ESAWordCover")
-
-        kwargs['number_of_classes'] = 23
-        return super().split(basedir=basedir, train_size=train_size, test_size=test_size, val_size=val_size, cache_size=cache_size, **kwargs)
-
-    @classmethod
-    def split_per_partition(cls, split_file, partitions_id=None, cache_size=1000, **kwargs):
-        print (kwargs)
-        if 'number_of_classes' in kwargs.keys():
-            raise ValueError("cannot use 'num_classes', since it is fixed in ESAWordCover")
-        kwargs['number_of_classes'] = 23
-        return super().split_per_partition(split_file=split_file, partitions_id=partitions_id, cache_size=cache_size, **kwargs)
+    def get_number_of_classes(self):
+        return 23

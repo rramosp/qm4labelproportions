@@ -59,7 +59,8 @@ class GenericUnet:
                  wandb_entity = 'rramosp',
                  partitions_id = 'aschips',
                  cache_size = 10000,
-                 class_weights = {2: 1, 11:1}):
+                 class_weights = None
+                ):
 
         self.learning_rate = learning_rate
         self.loss_name = loss
@@ -82,8 +83,6 @@ class GenericUnet:
         if not os.path.exists(outdir):
             os.makedirs(outdir)
 
-        self.metrics = metrics.ProportionsMetrics(class_weights = class_weights)
-
         self.tr, self.ts, self.val = data_generator_class.split(
                 basedir = self.datadir,
                 partitions_id = partitions_id,
@@ -94,6 +93,16 @@ class GenericUnet:
                 cache_size = cache_size,
                 shuffle = True                                             
             )
+
+        if self.class_weights is None:
+            nclasses = self.tr.number_of_classes
+            self.class_weights = {i:1/nclasses for i in range(len(nclasses))}
+
+        self.metrics = metrics.ProportionsMetrics(class_weights = class_weights, number_of_classes=self.tr.number_of_classes)
+
+        # if there are no class weights, assume equal weight for all classes
+        # as defined in the dataloader
+
 
         if wandb_project is not None:
             wconfig = self.get_wandb_config()
@@ -150,7 +159,7 @@ class GenericUnet:
         return val_x, val_p, val_l, val_out
 
     def plot_val_sample(self, n=10):
-        val_x, val_p, val_l, val_out = self.get_val_sample()
+        val_x, val_p, val_l, val_out = self.get_val_sample(n=n)
         tval_out = (val_out>0.5).astype(int)
         chip_props_on_out = [i.mean() for i in val_out>0.5]
         chip_props_on_label = [i.mean() for i in val_l>0.5]
@@ -159,7 +168,7 @@ class GenericUnet:
         if self.measure_accuracy():
             accs = []
             for i in range(len(y_true)):
-                acc = self.metrics.compute_mean_class_accuracy(y_true[i:i+1], y_pred[i:i+1])
+                acc = self.metrics.compute_accuracy(y_true[i:i+1], y_pred[i:i+1])
                 accs.append(acc)
 
         for ax,i in subplots(len(val_x)):
@@ -231,7 +240,7 @@ class GenericUnet:
                 losses.append(loss)
                 mseps.append(self.metrics.multiclass_proportions_mse_on_chip(l, out))
                 if self.measure_accuracy():
-                    acc = self.metrics.compute_mean_class_accuracy(l, out)
+                    acc = self.metrics.compute_accuracy(l, out)
                     accs.append(acc)
             val_loss = np.mean(losses)
             if val_loss < min_val_loss:
@@ -262,7 +271,7 @@ class GenericUnet:
             out = self.predict(x)
             loss = self.get_loss(out,p,l).numpy()
             if self.measure_accuracy():
-                acc = self.metrics.compute_mean_class_accuracy(l, out)
+                acc = self.metrics.compute_accuracy(l, out)
 
             msep =  self.metrics.multiclass_proportions_mse_on_chip(l, out).numpy()
             losses.append(loss)
