@@ -173,11 +173,10 @@ class ProportionsMetrics:
         block_size = y_pred.shape[1] * y_pred.shape[2]
         sigma_2 = (tf.reduce_sum(y_pred * (1 - y_pred), 
                                 axis=[1,2]) / block_size ** 2)
-        rho_2 = eta * (1 - eta)
         # compute loss
         loss = tf.reduce_mean(
                 tf.reduce_sum(
-                    0.5 * (eta - mu)**2 / (sigma_2 + rho_2) +
+                    0.5 * (eta - mu)**2 / (sigma_2) +
                     0.5 * tf.math.log(2 * np.pi * sigma_2), 
                     axis=-1
                 )
