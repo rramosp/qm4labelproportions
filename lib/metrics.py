@@ -164,20 +164,20 @@ class ProportionsMetrics:
         assert len(true_proportions.shape)==2 and true_proportions.shape[-1]==self.number_of_classes
         
         # select only the proportions of the specified classes (columns)
-        proportions_selected = tf.gather(true_proportions, self.class_ids, axis=1)
+        eta = tf.gather(true_proportions, self.class_ids, axis=1)
 
         # compute the proportions on prediction (mu)
-        proportions_y_pred = tf.reduce_mean(y_pred, axis=[1,2])
+        mu = tf.reduce_mean(y_pred, axis=[1,2])
 
         # compute variances (sigma^2)
         block_size = y_pred.shape[1] * y_pred.shape[2]
         sigma_2 = (tf.reduce_sum(y_pred * (1 - y_pred), 
                                 axis=[1,2]) / block_size ** 2)
-        
+        rho_2 = eta * (1 - eta)
         # compute loss
         loss = tf.reduce_mean(
-                tf.reduce_sum((
-                    proportions_selected - proportions_y_pred)**2 / sigma_2 +
+                tf.reduce_sum(
+                    0.5 * (eta - mu)**2 / (sigma_2 + rho_2) +
                     0.5 * tf.math.log(2 * np.pi * sigma_2), 
                     axis=-1
                 )
