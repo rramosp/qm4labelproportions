@@ -250,6 +250,10 @@ class GenericUnet:
                 out = self.predict(x)
                 loss = self.get_loss(out,p,l).numpy()
                 losses.append(loss)
+                mseps.append(self.metrics.multiclass_proportions_mse_on_chip(l, out))
+                if self.measure_accuracy():
+                    acc = self.metrics.compute_accuracy(l, out)
+                    accs.append(acc)
             val_loss = np.mean(losses)
             if val_loss < min_val_loss:
                 min_val_loss = val_loss
@@ -257,6 +261,9 @@ class GenericUnet:
             if self.wandb_project is not None:
                 log_dict = {}
                 log_dict["val/loss"] = val_loss
+                if self.measure_accuracy():
+                    log_dict["val/acc"] = np.mean(accs)
+                log_dict["val/mseprops_on_chip"] = np.mean(mseps)
                 wandb.log(log_dict)
 
 

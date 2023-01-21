@@ -19,7 +19,8 @@ def parameter_sweep(datadir,
                    class_weights=None,
                    wproject=None,
                    wentity=None,
-                   data_generator_class = data.S2LandcoverDataGenerator):
+                   data_generator_class = data.S2LandcoverDataGenerator,
+                   n_batches_online_val = np.inf):
     param_grid = dict(init_args)
     if type(learning_rate) is float or type(learning_rate) is int:
         param_grid['lr'] = [learning_rate]
@@ -35,23 +36,24 @@ def parameter_sweep(datadir,
         print(params)
         lr = params.pop('lr')
         batch_size = params.pop('batch_size')
-        # clf = run_experiment(datadir=datadir,
-        #            outdir=outdir,
-        #            model_class=model_class, 
-        #            init_args=params,
-        #            learning_rate=lr,
-        #            batch_size=batch_size,
-        #            loss=loss, 
-        #            partitions_id=partitions_id,
-        #            epochs=epochs, 
-        #            cache_size=cache_size,
-        #            class_weights=class_weights,
-        #            wproject=wproject,
-        #            wentity=wentity,
-        #            data_generator_class=data_generator_class
-        #           )
-        # if hasattr(clf, 'run_id'):
-        #     run_ids.append(clf.run_id)
+        clf = run_experiment(datadir=datadir,
+                   outdir=outdir,
+                   model_class=model_class, 
+                   init_args=params,
+                   learning_rate=lr,
+                   batch_size=batch_size,
+                   loss=loss, 
+                   partitions_id=partitions_id,
+                   epochs=epochs, 
+                   cache_size=cache_size,
+                   class_weights=class_weights,
+                   wproject=wproject,
+                   wentity=wentity,
+                   data_generator_class=data_generator_class,
+                   n_batches_online_val=n_batches_online_val
+                  )
+        if hasattr(clf, 'run_id'):
+            run_ids.append(clf.run_id)
     return run_ids
 
 def run_experiment(datadir,
