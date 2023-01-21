@@ -1,4 +1,5 @@
 import psutil
+import numpy as np
 from .lib import data
 from sklearn.model_selection import ParameterSampler
 import matplotlib.pyplot as plt
@@ -66,7 +67,8 @@ def run_experiment(datadir,
                    class_weights=None,
                    wproject=None,
                    wentity=None,
-                   data_generator_class = data.S2LandcoverDataGenerator
+                   data_generator_class = data.S2LandcoverDataGenerator,
+                   n_batches_online_val = np.inf
                   ):
     print ("XXXX", loss, "XXXX") 
     print ("\n---------", partitions_id, "------------")
@@ -84,7 +86,8 @@ def run_experiment(datadir,
                 wandb_entity = wentity,
                 cache_size = cache_size, 
                 class_weights = class_weights,
-                data_generator_class = data_generator_class)
+                data_generator_class = data_generator_class,
+                n_batches_online_val=n_batches_online_val)
     print ("-----", psutil.virtual_memory())
     pcs.fit(epochs=epochs)
     pcs.plot_val_sample(10); plt.show()

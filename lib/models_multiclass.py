@@ -6,6 +6,7 @@ from datetime import datetime
 from keras.utils.layer_utils import count_params
 import numpy as np
 import matplotlib.pyplot as plt
+import matplotlib
 import wandb
 from . import data
 from . import metrics
@@ -59,7 +60,8 @@ class GenericUnet:
                  wandb_entity = 'rramosp',
                  partitions_id = 'aschips',
                  cache_size = 10000,
-                 class_weights = None
+                 class_weights = None,
+                 n_batches_online_val = np.inf
                 ):
 
         self.learning_rate = learning_rate
@@ -69,7 +71,7 @@ class GenericUnet:
         self.wandb_project = wandb_project
         self.wandb_entity = wandb_entity
         self.class_weights = class_weights
-
+        self.n_batches_online_val = n_batches_online_val 
 
         self.train_size = train_size
         self.val_size   = val_size
@@ -94,6 +96,8 @@ class GenericUnet:
         if self.class_weights is None:
             nclasses = self.tr.number_of_classes
             self.class_weights = {i:1/nclasses for i in range(nclasses)}
+
+        self.number_of_classes = len(self.class_weights)
 
         self.run_name = f"{self.get_name()}-{self.partitions_id}-{self.loss_name}-{datetime.now().strftime('%Y%m%d[%H%M]')}"
         self.train_model, self.val_model = self.get_models()
@@ -161,11 +165,14 @@ class GenericUnet:
 
     def plot_val_sample(self, n=10):
         val_x, val_p, val_l, val_out = self.get_val_sample(n=n)
-        tval_out = (val_out>0.5).astype(int)
+        tval_out = np.argmax(val_out, axis=-1)
         chip_props_on_out = [i.mean() for i in val_out>0.5]
         chip_props_on_label = [i.mean() for i in val_l>0.5]
         y_true = val_l
         y_pred = tval_out
+
+        cmap=matplotlib.colors.ListedColormap([plt.cm.tab20(i) for i in range(self.number_of_classes)])
+
         if self.measure_accuracy():
             accs = []
             for i in range(len(y_true)):
@@ -176,18 +183,18 @@ class GenericUnet:
             plt.imshow(val_x[i])        
             if i==0: 
                 plt.ylabel("input rgb")
-                plt.title(f"{self.partitions_id} | {self.loss_name}")
+                plt.title(f"{self.partitions_id}\n{self.loss_name}")
 
-        for ax,i in subplots(len(val_l)):
-            plt.imshow(val_l[i])
+        for ax,i in subplots(len(val_l)):            
+            plt.imshow(val_l[i], vmin=0, vmax=self.number_of_classes, cmap=cmap, interpolation='none')
             if i==0: plt.ylabel("labels")
             plt.title(f"chip props {chip_props_on_label[i]:.2f}")
 
         for ax,i in subplots(len(val_out)):
-            plt.imshow(tval_out[i].argmax(axis=-1))
-            title = f"chip props {chip_props_on_out[i]:.2f}"
+            plt.imshow(tval_out[i], vmin=0, vmax=self.number_of_classes, cmap=cmap, interpolation='none')
+            title = f"chip props {chip_props_on_out[i]:.3f}"
             if self.measure_accuracy():
-                title += f"  acc {accs[i]:.2f}"
+                title += f"  acc {accs[i]:.4f}"
             plt.title(title)
             if i==0: plt.ylabel("thresholded output")
 
@@ -235,7 +242,10 @@ class GenericUnet:
             accs = []
             mseps = []
             print ("\nvalidation", flush=True)
-            for x, (p,l) in pbar(self.val):
+            max_value = np.min([len(self.val),self.n_batches_online_val ])
+            for i, (x, (p,l)) in pbar(enumerate(self.val), max_value=max_value):
+                if i>=self.n_batches_online_val:
+                    break
                 x,l = self.normitem(x,l)
                 out = self.predict(x)
                 loss = self.get_loss(out,p,l).numpy()
