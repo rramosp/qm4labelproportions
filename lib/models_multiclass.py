@@ -206,10 +206,11 @@ class GenericUnet:
     def get_models(self):
         raise NotImplementedError()
 
-    def get_loss(self, out, p, l):
+    def get_loss(self, out, p, l): 
         if self.loss_name == 'multiclass_proportions_mse':
             return self.metrics.multiclass_proportions_mse(p, out)
-
+        if self.loss_name == 'multiclass_LSRN_loss':
+            return self.metrics.multiclass_LSRN_loss(p, out)
         raise ValueError(f"unkown loss '{self.loss_name}'")
 
     def predict(self, x):
