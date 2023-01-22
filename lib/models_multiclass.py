@@ -61,7 +61,8 @@ class GenericUnet:
                  partitions_id = 'aschips',
                  cache_size = 10000,
                  class_weights = None,
-                 n_batches_online_val = np.inf
+                 n_batches_online_val = np.inf,
+                 max_chips = None
                 ):
 
         self.learning_rate = learning_rate
@@ -90,7 +91,8 @@ class GenericUnet:
                 test_size = self.test_size, 
                 val_size = self.val_size,
                 cache_size = cache_size,
-                shuffle = True                                             
+                shuffle = True,
+                max_chips = max_chips
             )
 
         if self.class_weights is None:

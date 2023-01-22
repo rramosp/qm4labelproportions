@@ -1,6 +1,6 @@
 import psutil
 import numpy as np
-from .lib import data
+from lib import data
 
 
 def run_experiment(datadir,
@@ -17,7 +17,8 @@ def run_experiment(datadir,
                    wproject=None,
                    wentity=None,
                    data_generator_class = data.S2LandcoverDataGenerator,
-                   n_batches_online_val = np.inf
+                   n_batches_online_val = np.inf,
+                   max_chips = None
                   ):
     print ("XXXX", loss, "XXXX") 
     print ("\n---------", partitions_id, "------------")
@@ -36,7 +37,8 @@ def run_experiment(datadir,
                 cache_size = cache_size, 
                 class_weights = class_weights,
                 data_generator_class = data_generator_class,
-                n_batches_online_val=n_batches_online_val)
+                n_batches_online_val=n_batches_online_val,
+                max_chips = None)
     print ("-----", psutil.virtual_memory())
     pcs.fit(epochs=epochs)
     pcs.plot_val_sample(10);
