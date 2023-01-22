@@ -145,7 +145,44 @@ class ProportionsMetrics:
                 )
         )
         return r
-    
+
+    def multiclass_LSRN_loss(self, true_proportions, y_pred):
+        """
+        computes the loss proposed in:
+        
+         Malkin, Kolya, et al. "Label super-resolution networks." 
+         International Conference on Learning Representations. 2018
+
+        y_pred: a tf tensor of shape [batch_size, pixel_size, pixel_size, len(class_ids)] with probability predictions
+        target_proportions: a tf tensor of shape [batch_size, number_of_classes]
+        
+        
+        returns: a float with the loss.
+        """
+        
+        assert len(y_pred.shape)==4 and y_pred.shape[-1]==len(self.class_ids)
+        assert len(true_proportions.shape)==2 and true_proportions.shape[-1]==self.number_of_classes
+        
+        # select only the proportions of the specified classes (columns)
+        eta = tf.gather(true_proportions, self.class_ids, axis=1)
+
+        # compute the proportions on prediction (mu)
+        mu = tf.reduce_mean(y_pred, axis=[1,2])
+
+        # compute variances (sigma^2)
+        block_size = y_pred.shape[1] * y_pred.shape[2]
+        sigma_2 = (tf.reduce_sum(y_pred * (1 - y_pred), 
+                                axis=[1,2]) / block_size ** 2)
+        # compute loss
+        loss = tf.reduce_mean(
+                tf.reduce_sum(
+                    0.5 * (eta - mu)**2 / (sigma_2) +
+                    0.5 * tf.math.log(2 * np.pi * sigma_2), 
+                    axis=-1
+                )
+        )
+        return loss
+
     def multiclass_proportions_mse_on_chip(self, y_true, y_pred, binarize=False):
         """
         computes the mse between the proportions observed in a prediction wrt to a mask
