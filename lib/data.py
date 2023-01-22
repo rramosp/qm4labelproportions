@@ -116,7 +116,7 @@ class S2LandcoverDataGenerator(tf.keras.utils.Sequence):
     from https://stanford.edu/~shervine/blog/keras-how-to-generate-data-on-the-fly
     """
     @classmethod
-    def split(cls, basedir, train_size=0.7, test_size=0.3, val_size=0.0, cache_size=1000, **kwargs):
+    def split(cls, basedir, train_size=0.7, test_size=0.3, val_size=0.0, cache_size=1000, max_chips=None, **kwargs):
         assert np.abs(train_size + test_size + val_size - 1) < 1e-7
         assert not 'cache_size' in kwargs.keys()
         assert not 'chips_basedirs' in kwargs.keys()
@@ -124,6 +124,10 @@ class S2LandcoverDataGenerator(tf.keras.utils.Sequence):
         np.random.seed(10)
         cs = Chipset(basedir)
         chips_basedirs = np.r_[cs.files]
+        
+        if max_chips is not None:
+            chips_basedirs = np.random.permutation(chips_basedirs)[:max_chips]
+        
         permutation = np.random.permutation(len(chips_basedirs))
         i1 = int(len(permutation)*train_size)
         i2 = int(len(permutation)*(train_size+test_size))
@@ -145,16 +149,35 @@ class S2LandcoverDataGenerator(tf.keras.utils.Sequence):
         return tr, ts, val
 
     @classmethod
-    def split_per_partition(cls, split_file, partitions_id=None, cache_size=1000, **kwargs):
+    def split_per_partition(cls, split_file, partitions_id=None, cache_size=1000, max_chips=None, **kwargs):
         """
         creates three data loaders according to splits as defined in split_file
         """
         assert partitions_id is not None, "must set 'partitions_id'"
 
+        
+        # in case use specified a folder containing the splitfile
+        if os.path.isdir(split_file):
+            basedir = split_file
+            split_file_found = None
+            # look into that folder and the parent folder
+            for basedir in [split_file, f"{split_file}/.."]:
+                csv_files = [i for i in os.listdir(basedir) if i.endswith('.csv')]
+                if len(csv_files)==1:
+                    split_file_found = f"{basedir}/{csv_files[0]}"
+
+            if split_file_found is None:
+                raise ValueError("could not find any split file")
+
+            split_file = split_file_found        
+        
         # read split file, and data files
         splits = pd.read_csv(split_file)
         datadir = os.path.dirname(split_file)+"/data"
         files = os.listdir(datadir)
+
+        if max_chips is not None:
+            files = np.random.permutation(files)[:max_chips]
 
         # select only files which exist for each split
         split_files = {}
@@ -184,7 +207,8 @@ class S2LandcoverDataGenerator(tf.keras.utils.Sequence):
                  batch_size=32, 
                  shuffle=True,
                  cache_size=100,
-                 chips_basedirs=None
+                 chips_basedirs=None,
+                 max_chips = None
                  ):
         self.basedir = basedir
         if chips_basedirs is None:
@@ -192,6 +216,14 @@ class S2LandcoverDataGenerator(tf.keras.utils.Sequence):
             self.chips_basedirs = cs.files
         else:
             self.chips_basedirs = chips_basedirs    
+            
+        if shuffle:
+            self.chips_basedirs = np.random.permutation(self.chips_basedirs)
+
+        if max_chips is not None:
+            self.chips_basedirs = self.chips_basedirs[:max_chips]
+            
+            
         self.batch_size = batch_size
         self.shuffle = shuffle
         self.partitions_id = partitions_id

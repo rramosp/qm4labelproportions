@@ -91,7 +91,7 @@ def run_experiment(datadir,
                 class_weights = class_weights,
                 data_generator_class = data_generator_class,
                 n_batches_online_val=n_batches_online_val,
-                max_chips = None)
+                max_chips = max_chips)
     print ("-----", psutil.virtual_memory())
     pcs.fit(epochs=epochs)
     pcs.plot_val_sample(10); plt.show()
