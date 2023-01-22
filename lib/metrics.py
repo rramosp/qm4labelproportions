@@ -145,6 +145,10 @@ class ProportionsMetrics:
                 )
         )
         return r
+    
+    
+    def multiclass_proportions_rmse(self, true_proportions, y_pred, binarize=False):
+        return tf.sqrt(self.multiclass_proportions_mse(true_proportions, y_pred, binarize=binarize))
 
     def multiclass_LSRN_loss(self, true_proportions, y_pred):
         """
@@ -193,6 +197,11 @@ class ProportionsMetrics:
         """
         p_true = self.get_class_proportions_on_masks(y_true, dense=False)
         return self.multiclass_proportions_mse (p_true, y_pred, binarize=binarize)
+
+    def multiclass_proportions_rmse_on_chip(self, y_true, y_pred, binarize=False):
+        p_true = self.get_class_proportions_on_masks(y_true, dense=False)
+        return self.multiclass_proportions_rmse (p_true, y_pred, binarize=binarize)
+    
     
     def compute_iou_batch(self, y_true, y_pred):
         """
@@ -262,8 +271,10 @@ class ProportionsMetrics:
         hits = []
         total_pixels = []
         for i, class_id in enumerate(self.class_ids):
-            nb_pixels_correct = tf.reduce_sum( tf.cast(y_true==class_id, tf.float32) * tf.cast(y_pred==i, tf.float32) ) * self.class_w[i]
-            nb_pixels_in_class = tf.reduce_sum( tf.cast((y_true==class_id), tf.float32) )  * self.class_w[i]
+            y_true_ones = tf.cast(y_true==class_id, tf.float32)
+            y_pred_ones = tf.cast(y_pred==i, tf.float32)
+            nb_pixels_correct  = tf.reduce_sum( y_true_ones * y_pred_ones ) * self.class_w[i]
+            nb_pixels_in_class = tf.reduce_sum( y_true_ones )  * self.class_w[i]
             hits.append(nb_pixels_correct)
             total_pixels.append(nb_pixels_in_class)
 

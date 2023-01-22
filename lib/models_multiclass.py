@@ -168,17 +168,15 @@ class GenericUnet:
     def plot_val_sample(self, n=10):
         val_x, val_p, val_l, val_out = self.get_val_sample(n=n)
         tval_out = np.argmax(val_out, axis=-1)
-        chip_props_on_out = [i.mean() for i in val_out>0.5]
-        chip_props_on_label = [i.mean() for i in val_l>0.5]
-        y_true = val_l
-        y_pred = tval_out
-
         cmap=matplotlib.colors.ListedColormap([plt.cm.tab20(i) for i in range(self.number_of_classes)])
 
-        if self.measure_accuracy():
-            accs = []
-            for i in range(len(y_true)):
-                acc = self.metrics.compute_accuracy(y_true[i:i+1], y_pred[i:i+1])
+        accs = []
+        mseprops_onchip = []
+        for i in range(len(val_x)):
+            msep = self.metrics.multiclass_proportions_rmse_on_chip(val_l[i:i+1], val_out[i:i+1])
+            mseprops_onchip.append(msep)
+            if self.measure_accuracy():
+                acc = self.metrics.compute_accuracy(val_l[i:i+1], val_out[i:i+1])
                 accs.append(acc)
 
         for ax,i in subplots(len(val_x)):
@@ -190,18 +188,17 @@ class GenericUnet:
         for ax,i in subplots(len(val_l)):            
             plt.imshow(val_l[i], vmin=0, vmax=self.number_of_classes, cmap=cmap, interpolation='none')
             if i==0: plt.ylabel("labels")
-            plt.title(f"chip props {chip_props_on_label[i]:.2f}")
 
         for ax,i in subplots(len(val_out)):
             plt.imshow(tval_out[i], vmin=0, vmax=self.number_of_classes, cmap=cmap, interpolation='none')
-            title = f"chip props {chip_props_on_out[i]:.3f}"
+            title = f"rmseprop {mseprops_onchip[i]:.4f}"
             if self.measure_accuracy():
-                title += f"  acc {accs[i]:.4f}"
+                title += f"  acc {accs[i]:.3f}"
             plt.title(title)
             if i==0: plt.ylabel("thresholded output")
 
         return val_x, val_p, val_l, val_out
-
+    
     def get_name(self):
         raise NotImplementedError()
 
@@ -211,13 +208,14 @@ class GenericUnet:
     def get_loss(self, out, p, l): 
         if self.loss_name == 'multiclass_proportions_mse':
             return self.metrics.multiclass_proportions_mse(p, out)
+        if self.loss_name == 'multiclass_proportions_rmse':
+            return self.metrics.multiclass_proportions_rmse(p, out)
         if self.loss_name == 'multiclass_LSRN_loss':
             return self.metrics.multiclass_LSRN_loss(p, out)
         raise ValueError(f"unkown loss '{self.loss_name}'")
 
     def predict(self, x):
         out = self.val_model(x)
-        #out = tf.keras.layers.Softmax(axis=-1)(out)
         return out
 
     def get_trainable_variables(self):
