@@ -109,8 +109,6 @@ class GenericUnet:
 
         # if there are no class weights, assume equal weight for all classes
         # as defined in the dataloader
-
-
         if wandb_project is not None:
             wconfig = self.get_wandb_config()
             wandb.init(project=wandb_project, entity=wandb_entity, 
@@ -240,7 +238,10 @@ class GenericUnet:
                 grads = t.gradient(loss, self.get_trainable_variables())
                 self.opt.apply_gradients(zip(grads, self.get_trainable_variables()))
                 losses.append(loss.numpy())
+
+            log_dict = {}
             tr_loss = np.mean(losses)
+            log_dict['train/loss'] = tr_loss
             
             # measure stuff on validation for reporting
             losses, accs, ious, rmseps = [], [], [], []
@@ -273,7 +274,6 @@ class GenericUnet:
                 
             # log to wandb
             if self.wandb_project is not None:
-                log_dict = {}
                 log_dict["val/loss"] = val_loss
                 if self.produces_pixel_predictions():
                     log_dict["val/acc"] = val_mean_acc
@@ -281,6 +281,7 @@ class GenericUnet:
                 log_dict["val/rmseprops_on_chip"] = val_mean_rmse
                 wandb.log(log_dict)
 
+            # log to screen
             print (f"epoch {epoch:3d}, train loss {tr_loss:.5f}", flush=True)
             print (f"epoch {epoch:3d},   val loss {val_loss:.5f} {txt_metrics}", flush=True)
 
