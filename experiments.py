@@ -68,7 +68,10 @@ def parameter_sweep(datadir,
     else:
         param_grid['batch_size'] = batch_size
     run_ids = []
-    for i, params in enumerate(ParameterSampler(param_grid, n_iter=n_iter)):
+    param_samples = list(ParameterSampler(param_grid, n_iter=n_iter))
+    for sampl in param_samples:
+        print(sampl)
+    for i, params in enumerate(param_samples):
         print(f"Sweep: {i}")
         print(params)
         lr = params.pop('lr')
