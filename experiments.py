@@ -72,7 +72,7 @@ def parameter_sweep(datadir,
     for sampl in param_samples:
         print(sampl)
     for i, params in enumerate(param_samples):
-        print(f"Sweep: {i}")
+        print(f"\n\n\nSweep: {i}")
         print(params)
         lr = params.pop('lr')
         batch_size = params.pop('batch_size')
