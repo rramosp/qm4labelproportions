@@ -1,9 +1,37 @@
 import psutil
 import numpy as np
+import pandas as pd
 from .lib import data
 from sklearn.model_selection import ParameterSampler
 import matplotlib.pyplot as plt
 
+def exp_summary(run_ids, outdir):
+    '''
+    Generates a data frame from a list of run_ids. The information is grabed 
+    from files in outdir
+
+    Arguments:
+        run_ids: a list of strings with run identificators.
+        out_dir: path to a folder containing the experimentation files
+    Returns:
+        A dataframe sorted by val|rmse
+    '''
+    res_df = None
+    for run_id in run_ids:
+        df = pd.read_csv(outdir + '/' + run_id + '.csv')
+        df1 = df.rename(columns={"rmseprops_on_chip":"rmse"})
+        df1 = df1.set_index('Unnamed: 0').stack().to_frame()
+        df1.index = df1.index.map('|'.join)
+        with open(outdir + '/' + run_id + '.params') as f:
+            params = eval(f.read())
+        params['run_id'] = run_id
+        df2 = pd.Series(params).to_frame()
+        df = pd.concat([df1, df2])
+        if res_df is None:
+            res_df = df.T
+        else:
+            res_df = pd.concat([res_df, df.T])
+    return res_df.sort_values(by=['val|rmse'])
 
 def parameter_sweep(datadir,
                    outdir,
