@@ -49,6 +49,15 @@ def parameter_sweep(datadir,
                    wentity=None,
                    data_generator_class = data.S2LandcoverDataGenerator,
                    n_batches_online_val = np.inf):
+    '''
+    parameter_sweep works similar as run_experiment but the hyperparameters
+    are lists or distributions instead of individual values.
+    Same as it happens in sklearn.model_selection.RandomizedSearchCV
+    https://scikit-learn.org/stable/modules/grid_search.html#randomized-parameter-search
+    This applies for all the components of init_args, as well as for learning_rate
+    and batch_size. n_iter specifies the number of experiments each one corresponds
+    to a set of random parameters sampled from the corresponding distributions. 
+    '''
     param_grid = dict(init_args)
     if type(learning_rate) is float or type(learning_rate) is int:
         param_grid['lr'] = [learning_rate]
@@ -82,6 +91,7 @@ def parameter_sweep(datadir,
                   )
         if hasattr(clf, 'run_id'):
             run_ids.append(clf.run_id)
+        del clf
     return run_ids
 
 def run_experiment(datadir,
