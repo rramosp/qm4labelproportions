@@ -118,14 +118,17 @@ class ProportionsMetrics:
         computes the mse between proportions on probability predictions (y_pred)
         and target_proportions, using the class_weights in this instance.
         
-        y_pred: a tf tensor of shape [batch_size, pixel_size, pixel_size, len(class_ids)] with probability predictions
+        y_pred: a tf tensor of shape [batch_size, pixel_size, pixel_size, number_of_classes] with 
+                probability predictions (such as the output of a softmax layer,so that class 
+                proportions will be computed from it), or with shape [batch_size, number_of_classes] 
+                directly with the class proportions (must add up to 1).
         target_proportions: a tf tensor of shape [batch_size, number_of_classes]
         binarize: if true converts any probability >0.5 to 1 and any probability <0.5 to 0 using a steep sigmoid
         
         returns: a float with mse.
         """
         
-        assert len(y_pred.shape)==4 and y_pred.shape[-1]==len(self.class_ids)
+        assert (len(y_pred.shape)==4 or len(y_pred.shape)==2) and y_pred.shape[-1]==len(self.class_ids)
         assert len(true_proportions.shape)==2 and true_proportions.shape[-1]==self.number_of_classes
         
         if binarize:            
@@ -135,7 +138,12 @@ class ProportionsMetrics:
         proportions_selected = tf.gather(true_proportions, self.class_ids, axis=1)
 
         # compute the proportions on prediction
-        proportions_y_pred = tf.reduce_mean(y_pred, axis=[1,2])
+        if len(y_pred.shape)==4:
+            # if we have probability predictions per pixel (softmax output) compute the probabilities
+            # by averaging each class. Softmax output guarantees all will add up to one.
+            proportions_y_pred = tf.reduce_mean(y_pred, axis=[1,2])
+        else:
+            proportions_y_pred = y_pred
 
         # compute mse using class weights
         r = tf.reduce_mean(
@@ -152,14 +160,17 @@ class ProportionsMetrics:
         computes the root mse between proportions on probability predictions (y_pred)
         and target_proportions, using the class_weights in this instance.
         
-        y_pred: a tf tensor of shape [batch_size, pixel_size, pixel_size, len(class_ids)] with probability predictions
+        y_pred: a tf tensor of shape [batch_size, pixel_size, pixel_size, number_of_classes] with 
+                probability predictions (such as the output of a softmax layer,so that class 
+                proportions will be computed from it), or with shape [batch_size, number_of_classes] 
+                directly with the class proportions (must add up to 1).
         target_proportions: a tf tensor of shape [batch_size, number_of_classes]
         binarize: if true converts any probability >0.5 to 1 and any probability <0.5 to 0 using a steep sigmoid
         
         returns: a float with root mse.
         """
         
-        assert len(y_pred.shape)==4 and y_pred.shape[-1]==len(self.class_ids)
+        assert (len(y_pred.shape)==4 or len(y_pred.shape)==2) and y_pred.shape[-1]==len(self.class_ids)
         assert len(true_proportions.shape)==2 and true_proportions.shape[-1]==self.number_of_classes
         
         if binarize:            
@@ -169,7 +180,12 @@ class ProportionsMetrics:
         proportions_selected = tf.gather(true_proportions, self.class_ids, axis=1)
 
         # compute the proportions on prediction
-        proportions_y_pred = tf.reduce_mean(y_pred, axis=[1,2])
+        if len(y_pred.shape)==4:
+            # if we have probability predictions per pixel (softmax output) compute the probabilities
+            # by averaging each class. Softmax output guarantees all will add up to one.
+            proportions_y_pred = tf.reduce_mean(y_pred, axis=[1,2])
+        else:
+            proportions_y_pred = y_pred
 
         # compute mse using class weights
         r = tf.reduce_mean(
