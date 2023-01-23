@@ -190,13 +190,29 @@ class GenericUnet:
             if i==0: plt.ylabel("labels")
 
         for ax,i in subplots(len(val_out)):
-            plt.imshow(tval_out[i], vmin=0, vmax=self.number_of_classes, cmap=cmap, interpolation='none')
-            title = f"rmseprop {mseprops_onchip[i]:.4f}"
+            title = f"onchip: rmseprop {mseprops_onchip[i]:.4f}"
             if self.produces_pixel_predictions():
                 title += f"\nacc {accs[i]:.3f}"
                 title += f"  iou {ious[i]:.3f}"
+                plt.imshow(tval_out[i], vmin=0, vmax=self.number_of_classes, cmap=cmap, interpolation='none')
+                if i==len(val_out)-1:
+                    cbar = plt.colorbar(ax=ax, ticks=range(self.number_of_classes))
+                    cbar.ax.set_yticklabels([f"{i}" for i in range(self.number_of_classes)])  # vertically oriented colorbar
             plt.title(title)
             if i==0: plt.ylabel("thresholded output")
+
+        n = self.number_of_classes
+        y_pred_proportions = self.metrics.get_y_pred_as_proportions(val_out)
+        onchip_proportions = self.metrics.get_class_proportions_on_masks(val_l)
+        for ax, i in subplots(len(val_x)):
+            plt.bar(np.arange(n)-.2, val_p[i], 0.2, label="on partition", alpha=.5)
+            plt.bar(np.arange(n), onchip_proportions[i], 0.2, label="on chip", alpha=.5)
+            plt.bar(np.arange(n)+.2, y_pred_proportions[i], 0.2, label="pred", alpha=.5)
+            if i==len(val_x)-1:
+                plt.legend()
+            plt.grid();
+            plt.xticks(np.arange(n), np.arange(n));
+            plt.title("proportions per class")            
 
         return val_x, val_p, val_l, val_out
     
