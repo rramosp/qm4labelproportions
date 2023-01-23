@@ -148,7 +148,41 @@ class ProportionsMetrics:
     
     
     def multiclass_proportions_rmse(self, true_proportions, y_pred, binarize=False):
-        return tf.sqrt(self.multiclass_proportions_mse(true_proportions, y_pred, binarize=binarize))
+        """
+        computes the root mse between proportions on probability predictions (y_pred)
+        and target_proportions, using the class_weights in this instance.
+        
+        y_pred: a tf tensor of shape [batch_size, pixel_size, pixel_size, len(class_ids)] with probability predictions
+        target_proportions: a tf tensor of shape [batch_size, number_of_classes]
+        binarize: if true converts any probability >0.5 to 1 and any probability <0.5 to 0 using a steep sigmoid
+        
+        returns: a float with root mse.
+        """
+        
+        assert len(y_pred.shape)==4 and y_pred.shape[-1]==len(self.class_ids)
+        assert len(true_proportions.shape)==2 and true_proportions.shape[-1]==self.number_of_classes
+        
+        if binarize:            
+            y_pred = tf.sigmoid(50*(y_pred-0.5))
+        
+        # select only the proportions of the specified classes (columns)
+        proportions_selected = tf.gather(true_proportions, self.class_ids, axis=1)
+
+        # compute the proportions on prediction
+        proportions_y_pred = tf.reduce_mean(y_pred, axis=[1,2])
+
+        # compute mse using class weights
+        r = tf.reduce_mean(
+                tf.sqrt(
+                    tf.reduce_sum(
+                        (proportions_selected - proportions_y_pred)**2 * self.class_w, 
+                        axis=-1
+                    )
+                )
+        )
+        return r
+        
+    
 
     def multiclass_LSRN_loss(self, true_proportions, y_pred):
         """
@@ -237,12 +271,53 @@ class ProportionsMetrics:
         weighted_iou = weighted_iou / sum(weights_used)
         return weighted_iou
 
-    def compute_iou(self, y_true, y_pred):
+    def xcompute_iou(self, y_true, y_pred):
         per_item_iou = []
         for i in range(len(y_true)):
             per_item_iou.append(self.compute_iou_batch(y_true[i:i+1], y_pred[i:i+1]))
 
-        return np.mean(per_item_iou)        
+        return np.mean(per_item_iou)  
+    
+    
+    def compute_iou(self, y_true, y_pred):
+        """
+        computes iou using the formula tp / (tp + fp + fn) for each individual image.
+        for each image, it computes the iou for each class and then averages only over
+        the classes containing pixels in that image in y_true.
+        """
+
+        if y_true.shape[1]<y_pred.shape[1]:
+            y_true = tf.image.resize(y_true[..., tf.newaxis], y_pred.shape[1:], method='nearest')[:,:,:,0]
+
+        if y_pred.shape[1]<y_true.shape[1]:
+            y_pred = tf.image.resize(y_pred, y_true.shape[1:], method='nearest')
+
+        itemclass_iou = []
+        itemclass_trueones = []
+        for i,class_id in enumerate(self.class_ids):
+            y_true_ones  = tf.cast(y_true==class_id, tf.float32) 
+            y_pred_ones  = tf.cast(tf.argmax(y_pred, axis=-1)==i, tf.float32)
+            y_true_zeros = tf.cast(y_true!=class_id, tf.float32) 
+            y_pred_zeros = tf.cast(tf.argmax(y_pred, axis=-1)!=i, tf.float32)
+
+            tp = tf.reduce_sum(y_true_ones  * y_pred_ones, axis=[1,2])
+            fp = tf.reduce_sum(y_true_zeros * y_pred_ones, axis=[1,2])
+            fn = tf.reduce_sum(y_true_ones  * y_pred_zeros, axis=[1,2])
+
+            true_ones = tf.cast(tf.reduce_sum(y_true_ones, axis=[1,2])>0, tf.float32)
+            iou_this_class = tp / (tp + fp + fn)
+
+            # substitute nans with zeros
+            iou_this_class = tf.where(tf.math.is_nan(iou_this_class), tf.zeros_like(iou_this_class), iou_this_class)
+
+            itemclass_iou.append(iou_this_class)
+            itemclass_trueones.append(true_ones)
+
+        itemclass_iou = tf.convert_to_tensor(itemclass_iou)
+        itemclass_trueones = tf.convert_to_tensor(itemclass_trueones)
+        # only compute the mean of the classes with pixels in y_true
+        per_item_iou = tf.reduce_sum(itemclass_iou, axis=0)/tf.reduce_sum(itemclass_trueones, axis=0)
+        return tf.reduce_mean(per_item_iou)    
 
     def compute_accuracy(self, y_true, y_pred):
         """

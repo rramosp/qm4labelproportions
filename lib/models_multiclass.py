@@ -134,11 +134,10 @@ class GenericUnet:
         self.val.empty_cache()
         self.ts.empty_cache()
         gc.collect()
-
-
-    def measure_accuracy(self):
-        return True
-
+    
+    def produces_pixel_predictions(self):
+        return True    
+    
     def get_wandb_config(self):
         self.trainable_params = sum(count_params(layer) for layer in self.train_model.trainable_weights)
         self.non_trainable_params = sum(count_params(layer) for layer in self.train_model.non_trainable_weights)
@@ -171,14 +170,17 @@ class GenericUnet:
         cmap=matplotlib.colors.ListedColormap([plt.cm.tab20(i) for i in range(self.number_of_classes)])
 
         accs = []
+        ious = []
         mseprops_onchip = []
         for i in range(len(val_x)):
             msep = self.metrics.multiclass_proportions_rmse_on_chip(val_l[i:i+1], val_out[i:i+1])
             mseprops_onchip.append(msep)
-            if self.measure_accuracy():
+            if self.produces_pixel_predictions():
                 acc = self.metrics.compute_accuracy(val_l[i:i+1], val_out[i:i+1])
                 accs.append(acc)
-
+                iou = self.metrics.compute_iou(val_l[i:i+1], val_out[i:i+1])
+                ious.append(iou)
+                
         for ax,i in subplots(len(val_x)):
             plt.imshow(val_x[i])        
             if i==0: 
@@ -192,8 +194,9 @@ class GenericUnet:
         for ax,i in subplots(len(val_out)):
             plt.imshow(tval_out[i], vmin=0, vmax=self.number_of_classes, cmap=cmap, interpolation='none')
             title = f"rmseprop {mseprops_onchip[i]:.4f}"
-            if self.measure_accuracy():
-                title += f"  acc {accs[i]:.3f}"
+            if self.produces_pixel_predictions():
+                title += f"\nacc {accs[i]:.3f}"
+                title += f"  iou {ious[i]:.3f}"
             plt.title(title)
             if i==0: plt.ylabel("thresholded output")
 
@@ -225,7 +228,7 @@ class GenericUnet:
         tr_loss = 0
         min_val_loss = np.inf
         for epoch in range(epochs):
-            print (f"\nepoch {epoch},  loss {tr_loss:.5f}", flush=True)
+            print (f"\nepoch {epoch}", flush=True)
             losses = []
             for step_nb,(x,(p,l)) in enumerate(pbar(self.tr)):
                 # trim to unet input shape
@@ -238,10 +241,9 @@ class GenericUnet:
                 self.opt.apply_gradients(zip(grads, self.get_trainable_variables()))
                 losses.append(loss.numpy())
             tr_loss = np.mean(losses)
-            losses = []
-            accs = []
-            mseps = []
-            print ("\nvalidation", flush=True)
+            
+            # measure stuff on validation for reporting
+            losses, accs, ious, rmseps = [], [], [], []
             max_value = np.min([len(self.val),self.n_batches_online_val ])
             for i, (x, (p,l)) in pbar(enumerate(self.val), max_value=max_value):
                 if i>=self.n_batches_online_val:
@@ -250,22 +252,37 @@ class GenericUnet:
                 out = self.predict(x)
                 loss = self.get_loss(out,p,l).numpy()
                 losses.append(loss)
-                mseps.append(self.metrics.multiclass_proportions_mse_on_chip(l, out))
-                if self.measure_accuracy():
-                    acc = self.metrics.compute_accuracy(l, out)
-                    accs.append(acc)
+                rmseps.append(self.metrics.multiclass_proportions_rmse_on_chip(l, out))
+                if self.produces_pixel_predictions():
+                    accs.append(self.metrics.compute_accuracy(l, out))
+                    ious.append(self.metrics.compute_iou(l,out))
+                    
+            # summarize validation stuff
             val_loss = np.mean(losses)
+            val_mean_rmse = np.mean(rmseps)
+            txt_metrics = f"rmse {val_mean_rmse:.5f}"
+            if self.produces_pixel_predictions():
+                val_mean_acc = np.mean(accs)
+                val_mean_iou = np.mean(ious)
+                txt_metrics += f" acc {val_mean_acc:.5f} iou {val_mean_iou:.5f}"
+                
+            # save model if better val loss
             if val_loss < min_val_loss:
                 min_val_loss = val_loss
                 self.train_model.save_weights(self.run_file_path)
+                
+            # log to wandb
             if self.wandb_project is not None:
                 log_dict = {}
                 log_dict["val/loss"] = val_loss
-                if self.measure_accuracy():
-                    log_dict["val/acc"] = np.mean(accs)
-                log_dict["val/mseprops_on_chip"] = np.mean(mseps)
+                if self.produces_pixel_predictions():
+                    log_dict["val/acc"] = val_mean_acc
+                    log_dict["val/iou"] = val_mean_iou
+                log_dict["val/rmseprops_on_chip"] = val_mean_rmse
                 wandb.log(log_dict)
 
+            print (f"epoch {epoch:3d}, train loss {tr_loss:.5f}", flush=True)
+            print (f"epoch {epoch:3d},   val loss {val_loss:.5f} {txt_metrics}", flush=True)
 
     def summary_dataset(self, dataset_name):
         assert dataset_name in ['train', 'val', 'test']
@@ -277,24 +294,29 @@ class GenericUnet:
         else:
             dataset = self.ts
 
-        losses, accs, mseps = [], [], []
+        losses, accs, mseps, ious = [], [], [], []
         for x, (p,l) in pbar(dataset):
             x,l = self.normitem(x,l)
             out = self.predict(x)
             loss = self.get_loss(out,p,l).numpy()
-            if self.measure_accuracy():
+            if self.produces_pixel_predictions():
                 acc = self.metrics.compute_accuracy(l, out)
-
-            msep =  self.metrics.multiclass_proportions_mse_on_chip(l, out).numpy()
-            losses.append(loss)
-            if self.measure_accuracy():
                 accs.append(acc)
+                iou = self.metrics.compute_iou(l, out)
+                ious.append(iou)
+                
+            msep =  self.metrics.multiclass_proportions_rmse_on_chip(l, out).numpy()
+            losses.append(loss)
             mseps.append(msep)
-        if self.measure_accuracy():
-            return {'loss': np.mean(losses), 'accuracy': np.mean(accs), 'mseprops_on_chip': np.mean(mseps)}
-        else:
-            return {'loss': np.mean(losses), 'mseprops_on_chip': np.mean(mseps)}
             
+        r = {'loss': np.mean(losses), 'rmseprops_on_chip': np.mean(mseps)}
+        
+        if self.produces_pixel_predictions():
+            r['accuracy'] = np.mean(accs)
+            r['iou'] = np.mean(iou)
+
+        return r
+    
     def summary_result(self):
         """
         runs summary_dataset over train, val and test
