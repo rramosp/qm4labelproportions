@@ -1,4 +1,4 @@
-from tensorflow.keras.layers import Conv2D, Dropout, MaxPooling2D, Conv2DTranspose, Input, Flatten, concatenate, Lambda
+from tensorflow.keras.layers import Conv2D, Dropout, MaxPooling2D, Conv2DTranspose, Input, Flatten, concatenate, Lambda, Dense
 from tensorflow.keras.models import Model
 import tensorflow as tf
 from progressbar import progressbar as pbar
@@ -545,3 +545,29 @@ class PatchClassifierSegmentation(GenericUnet):
 
     def get_name(self):
         return f"patch_classifier_segm"
+
+
+class ConvolutionsRegression(GenericUnet):
+    
+    def __init__(self, backbone, input_shape=(96,96,3)):
+        """
+        backbone: a class under tensorflow.keras.applications
+        """
+        self.backbone = backbone
+        self.input_shape = input_shape
+    
+    def get_name(self):
+        return f"convregr_{self.backbone.__name__}"
+    
+    def produces_pixel_predictions(self):
+        return False    
+    
+    def get_models(self):
+        inputs = Input(self.input_shape)
+        backcone_output  = self.backbone(include_top=False, weights=None, input_tensor=inputs)(inputs)
+        flat   = Flatten()(backcone_output)
+        dense1 = Dense(1024, activation="relu")(flat)
+        dense2 = Dense(1024, activation="relu")(dense1)
+        outputs = Dense(self.number_of_classes, activation='softmax')(dense2)
+        model = Model([inputs], [outputs])
+        return model, model
