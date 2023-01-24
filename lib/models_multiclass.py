@@ -65,6 +65,8 @@ class GenericUnet:
                  max_chips = None
                 ):
 
+        print (f"initializing {self.get_name()}")
+
         self.learning_rate = learning_rate
         self.loss_name = loss
         self.cache_size = cache_size
@@ -442,8 +444,14 @@ class SMUnetSegmentation(GenericUnet):
         m = tf.keras.models.Model([inp], [out])
         return m, m
 
+
     def get_name(self):
-        return f"{self.backbone}_unet"
+        r = f"segmnt_{self.backbone}"
+
+        if 'encoder_weights' in self.sm_keywords.keys() and self.sm_keywords['encoder_weights'] is not None:
+            r += f"_{self.sm_keywords['encoder_weights']}"
+
+        return r
 
 
 # Patch extraction as a layer 
@@ -569,22 +577,28 @@ class PatchClassifierSegmentation(GenericUnet):
 
 class ConvolutionsRegression(GenericUnet):
     
-    def __init__(self, backbone, input_shape=(96,96,3)):
+    def __init__(self, backbone, backbone_kwargs={'weights': None}, input_shape=(96,96,3)):
         """
         backbone: a class under tensorflow.keras.applications
         """
         self.backbone = backbone
+        self.backbone_kwargs = backbone_kwargs
         self.input_shape = input_shape
     
     def get_name(self):
-        return f"convregr_{self.backbone.__name__}"
-    
+        r = f"convregr_{self.backbone.__name__}"
+
+        if 'weights' in self.backbone_kwargs.keys() and self.backbone_kwargs['weights'] is not None:
+            r += f"_{self.backbone_kwargs['weights']}"
+
+        return r
+
     def produces_pixel_predictions(self):
         return False    
     
     def get_models(self):
         inputs = Input(self.input_shape)
-        backcone_output  = self.backbone(include_top=False, weights=None, input_tensor=inputs)(inputs)
+        backcone_output  = self.backbone(include_top=False, input_tensor=inputs, **self.backbone_kwargs)(inputs)
         flat   = Flatten()(backcone_output)
         dense1 = Dense(1024, activation="relu")(flat)
         dense2 = Dense(1024, activation="relu")(dense1)
