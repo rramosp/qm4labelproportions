@@ -439,7 +439,7 @@ class QMPatchSegmentation(models_multiclass.GenericUnet):
                 layer in self.train_model.non_trainable_weights)
             
         wconfig = {
-            "learning_rate": self.opt.learning_rate,
+            "learning_rate": self.learning_rate,
             "batch_size": self.tr.batch_size,
             'trainable_params': self.trainable_params,
             'non_trainable_params': self.non_trainable_params,
