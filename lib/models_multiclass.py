@@ -444,8 +444,14 @@ class SMUnetSegmentation(GenericUnet):
         m = tf.keras.models.Model([inp], [out])
         return m, m
 
+
     def get_name(self):
-        return f"{self.backbone}_unet"
+        r = f"segmnt_{self.backbone}"
+
+        if 'encoder_weights' in self.sm_keywords.keys() and self.sm_keywords['encoder_weights'] is not None:
+            r += f"_{self.sm_keywords['encoder_weights']}"
+
+        return r
 
 
 # Patch extraction as a layer 
