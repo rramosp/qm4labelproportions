@@ -117,6 +117,7 @@ class GenericUnet:
             self.run_file_path = os.path.join(self.outdir, self.run_id + ".h5")            
         else:
             self.run_file_path = get_next_file_path(self.outdir, "run","h5")
+            self.run_id = os.path.basename(self.run_file_path)[:-3]
         self.init_model_params()
         print ()
         return self
@@ -140,7 +141,7 @@ class GenericUnet:
         self.trainable_params = sum(count_params(layer) for layer in self.train_model.trainable_weights)
         self.non_trainable_params = sum(count_params(layer) for layer in self.train_model.non_trainable_weights)
         wconfig = {
-            "learning_rate": self.opt.learning_rate,
+            "learning_rate": self.learning_rate,
             "batch_size": self.tr.batch_size,
             'trainable_params': self.trainable_params,
             'non_trainable_params': self.non_trainable_params,
@@ -344,6 +345,9 @@ class GenericUnet:
         r = pd.DataFrame(r, index = ['train', 'val', 'test'])
         csv_path = self.run_file_path[:-3] + ".csv"
         r.to_csv(csv_path)
+        params_path = self.run_file_path[:-3] + ".params"
+        with open(params_path, 'w') as f:
+            f.write(repr(self.get_wandb_config()))
         return r
 
 
