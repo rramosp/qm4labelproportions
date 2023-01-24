@@ -202,7 +202,7 @@ class GenericUnet:
             if i==0: plt.ylabel("thresholded output")
 
         n = self.number_of_classes
-        y_pred_proportions = self.metrics.get_y_pred_as_proportions(val_out)
+        y_pred_proportions = self.metrics.get_y_pred_as_proportions(val_out, argmax=True)
         onchip_proportions = self.metrics.get_class_proportions_on_masks(val_l)
         for ax, i in subplots(len(val_x)):
             plt.bar(np.arange(n)-.2, val_p[i], 0.2, label="on partition", alpha=.5)
