@@ -435,12 +435,14 @@ class SMUnetSegmentation(GenericUnet):
       return w
 
     def get_models(self):
-        unet = model = sm.Unet(input_shape=(None,None,3), 
-                               **self.sm_keywords)
+        self.unet = sm.Unet(input_shape=(None,None,3), 
+                            classes = self.number_of_classes, 
+                            activation = 'softmax',
+                            **self.sm_keywords)
 
         inp = tf.keras.layers.Input(shape=(None, None, 3))
-        out = unet(inp)
-        out = tf.keras.layers.Conv2D(len(self.class_weights), (1,1), padding='same', activation='softmax')(out)
+        out = self.unet(inp)
+        #out = tf.keras.layers.Conv2D(len(self.class_weights), (1,1), padding='same', activation='softmax')(out)
         m = tf.keras.models.Model([inp], [out])
         return m, m
 
