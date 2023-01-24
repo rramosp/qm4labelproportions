@@ -200,10 +200,10 @@ class ProportionsMetrics:
         # compute the proportions on prediction
         proportions_y_pred = self.get_y_pred_as_proportions(y_pred, argmax)
 
-        # compute mse using class weights
+        # compute rmse 
         r = tf.reduce_mean(
                 tf.sqrt(
-                    tf.reduce_sum(
+                    tf.reduce_mean(
                         (proportions_selected - proportions_y_pred)**2, 
                         axis=-1
                     )
