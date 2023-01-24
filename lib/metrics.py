@@ -113,29 +113,61 @@ class ProportionsMetrics:
         return r.astype(np.float32)
     
     
-    def multiclass_proportions_mse(self, true_proportions, y_pred, binarize=False):
+    def get_y_pred_as_proportions(self, y_pred, argmax=False):
+        """
+        y_pred: a tf tensor of shape [batch_size, pixel_size, pixel_size, number_of_classes] with 
+                probability predictions per pixel (such as the output of a softmax layer,so that class 
+                proportions will be computed from it), or with shape [batch_size, number_of_classes] 
+                directly with the class proportions (must add up to 1).
+        argmax: if true compute proportions by selecting the class with highest assigned probability 
+                in each pixel and then computing the proportions of selected classes across each image.
+                If False, the class proportions will be computed by averaging the probabilities in 
+                each class channel.
+        
+        returns: a tf tensor of shape [batch_size, number_of_classes]
+                 if input has shape [batch_size, number_of_classes], the input is returned untouched
+        """
+        assert (len(y_pred.shape)==4 or len(y_pred.shape)==2) and y_pred.shape[-1]==len(self.class_ids)
+
+        # compute the proportions on prediction
+        if len(y_pred.shape)==4:
+            # if we have probability predictions per pixel (softmax output)
+            if argmax:
+                # compute proportions by selecting the class with highest assigned probability in each pixel
+                # and then computing the proportions of selected classes across each image
+                y_pred_argmax = tf.argmax(y_pred, axis=-1)                
+                r = tf.convert_to_tensor([tf.reduce_sum(tf.cast(y_pred_argmax==class_id, tf.float32), axis=[1,2]) \
+                                          for class_id in self.class_ids]) / np.prod(y_pred_argmax.shape[-2:])
+                r = tf.transpose(r, [1,0])
+            else:
+                # compute the proportions by averaging each class. Softmax output guarantees all will add up to one.
+                r = tf.reduce_mean(y_pred, axis=[1,2])
+        else:
+            # if we already have a probabilities vector return it as such
+            r = y_pred
+
+        return r        
+
+
+    def multiclass_proportions_mse(self, true_proportions, y_pred, argmax=False):
         """
         computes the mse between proportions on probability predictions (y_pred)
         and target_proportions, using the class_weights in this instance.
         
-        y_pred: a tf tensor of shape [batch_size, pixel_size, pixel_size, len(class_ids)] with probability predictions
-        target_proportions: a tf tensor of shape [batch_size, number_of_classes]
-        binarize: if true converts any probability >0.5 to 1 and any probability <0.5 to 0 using a steep sigmoid
-        
+        y_pred:  see y_pred in get_y_pred_as_proportions
+        argmax: see get_y_pred_as_proportions
+
         returns: a float with mse.
         """
         
-        assert len(y_pred.shape)==4 and y_pred.shape[-1]==len(self.class_ids)
+        assert (len(y_pred.shape)==4 or len(y_pred.shape)==2) and y_pred.shape[-1]==len(self.class_ids)
         assert len(true_proportions.shape)==2 and true_proportions.shape[-1]==self.number_of_classes
-        
-        if binarize:            
-            y_pred = tf.sigmoid(50*(y_pred-0.5))
-        
+                
         # select only the proportions of the specified classes (columns)
         proportions_selected = tf.gather(true_proportions, self.class_ids, axis=1)
 
         # compute the proportions on prediction
-        proportions_y_pred = tf.reduce_mean(y_pred, axis=[1,2])
+        proportions_y_pred = self.get_y_pred_as_proportions(y_pred, argmax)
 
         # compute mse using class weights
         r = tf.reduce_mean(
@@ -147,35 +179,32 @@ class ProportionsMetrics:
         return r
     
     
-    def multiclass_proportions_rmse(self, true_proportions, y_pred, binarize=False):
+    def multiclass_proportions_rmse(self, true_proportions, y_pred, argmax=False):
         """
         computes the root mse between proportions on probability predictions (y_pred)
         and target_proportions, using the class_weights in this instance.
         
-        y_pred: a tf tensor of shape [batch_size, pixel_size, pixel_size, len(class_ids)] with probability predictions
-        target_proportions: a tf tensor of shape [batch_size, number_of_classes]
-        binarize: if true converts any probability >0.5 to 1 and any probability <0.5 to 0 using a steep sigmoid
+        y_pred:  see y_pred in get_y_pred_as_proportions
+        argmax: see get_y_pred_as_proportions
         
+        WARN: class_weights are NOT used
+
         returns: a float with root mse.
         """
         
-        assert len(y_pred.shape)==4 and y_pred.shape[-1]==len(self.class_ids)
         assert len(true_proportions.shape)==2 and true_proportions.shape[-1]==self.number_of_classes
-        
-        if binarize:            
-            y_pred = tf.sigmoid(50*(y_pred-0.5))
         
         # select only the proportions of the specified classes (columns)
         proportions_selected = tf.gather(true_proportions, self.class_ids, axis=1)
 
         # compute the proportions on prediction
-        proportions_y_pred = tf.reduce_mean(y_pred, axis=[1,2])
+        proportions_y_pred = self.get_y_pred_as_proportions(y_pred, argmax)
 
-        # compute mse using class weights
+        # compute rmse 
         r = tf.reduce_mean(
                 tf.sqrt(
-                    tf.reduce_sum(
-                        (proportions_selected - proportions_y_pred)**2 * self.class_w, 
+                    tf.reduce_mean(
+                        (proportions_selected - proportions_y_pred)**2, 
                         axis=-1
                     )
                 )
@@ -221,7 +250,7 @@ class ProportionsMetrics:
         )
         return loss
 
-    def multiclass_proportions_mse_on_chip(self, y_true, y_pred, binarize=False):
+    def multiclass_proportions_mse_on_chip(self, y_true, y_pred, argmax=False):
         """
         computes the mse between the proportions observed in a prediction wrt to a mask
         y_pred: a tf tensor of shape [batch_size, pixel_size, pixel_size, len(class_ids)] with probability predictions
@@ -230,11 +259,11 @@ class ProportionsMetrics:
         returns: a float with mse
         """
         p_true = self.get_class_proportions_on_masks(y_true, dense=False)
-        return self.multiclass_proportions_mse (p_true, y_pred, binarize=binarize)
+        return self.multiclass_proportions_mse (p_true, y_pred, argmax=argmax)
 
-    def multiclass_proportions_rmse_on_chip(self, y_true, y_pred, binarize=False):
+    def multiclass_proportions_rmse_on_chip(self, y_true, y_pred, argmax=False):
         p_true = self.get_class_proportions_on_masks(y_true, dense=False)
-        return self.multiclass_proportions_rmse (p_true, y_pred, binarize=binarize)
+        return self.multiclass_proportions_rmse (p_true, y_pred, argmax=argmax)
     
     
     def compute_iou_batch(self, y_true, y_pred):
