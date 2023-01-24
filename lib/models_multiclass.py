@@ -1,4 +1,4 @@
-from tensorflow.keras.layers import Conv2D, Dropout, MaxPooling2D, Conv2DTranspose, Input, Flatten, concatenate, Lambda
+from tensorflow.keras.layers import Conv2D, Dropout, MaxPooling2D, Conv2DTranspose, Input, Flatten, concatenate, Lambda, Dense
 from tensorflow.keras.models import Model
 import tensorflow as tf
 from progressbar import progressbar as pbar
@@ -109,8 +109,6 @@ class GenericUnet:
 
         # if there are no class weights, assume equal weight for all classes
         # as defined in the dataloader
-
-
         if wandb_project is not None:
             wconfig = self.get_wandb_config()
             wandb.init(project=wandb_project, entity=wandb_entity, 
@@ -193,13 +191,29 @@ class GenericUnet:
             if i==0: plt.ylabel("labels")
 
         for ax,i in subplots(len(val_out)):
-            plt.imshow(tval_out[i], vmin=0, vmax=self.number_of_classes, cmap=cmap, interpolation='none')
-            title = f"rmseprop {mseprops_onchip[i]:.4f}"
+            title = f"onchip: rmseprop {mseprops_onchip[i]:.4f}"
             if self.produces_pixel_predictions():
                 title += f"\nacc {accs[i]:.3f}"
                 title += f"  iou {ious[i]:.3f}"
+                plt.imshow(tval_out[i], vmin=0, vmax=self.number_of_classes, cmap=cmap, interpolation='none')
+                if i==len(val_out)-1:
+                    cbar = plt.colorbar(ax=ax, ticks=range(self.number_of_classes))
+                    cbar.ax.set_yticklabels([f"{i}" for i in range(self.number_of_classes)])  # vertically oriented colorbar
             plt.title(title)
             if i==0: plt.ylabel("thresholded output")
+
+        n = self.number_of_classes
+        y_pred_proportions = self.metrics.get_y_pred_as_proportions(val_out, argmax=True)
+        onchip_proportions = self.metrics.get_class_proportions_on_masks(val_l)
+        for ax, i in subplots(len(val_x)):
+            plt.bar(np.arange(n)-.2, val_p[i], 0.2, label="on partition", alpha=.5)
+            plt.bar(np.arange(n), onchip_proportions[i], 0.2, label="on chip", alpha=.5)
+            plt.bar(np.arange(n)+.2, y_pred_proportions[i], 0.2, label="pred", alpha=.5)
+            if i==len(val_x)-1:
+                plt.legend()
+            plt.grid();
+            plt.xticks(np.arange(n), np.arange(n));
+            plt.title("proportions per class")            
 
         return val_x, val_p, val_l, val_out
     
@@ -241,7 +255,10 @@ class GenericUnet:
                 grads = t.gradient(loss, self.get_trainable_variables())
                 self.opt.apply_gradients(zip(grads, self.get_trainable_variables()))
                 losses.append(loss.numpy())
+
+            log_dict = {}
             tr_loss = np.mean(losses)
+            log_dict['train/loss'] = tr_loss
             
             # measure stuff on validation for reporting
             losses, accs, ious, rmseps = [], [], [], []
@@ -274,7 +291,6 @@ class GenericUnet:
                 
             # log to wandb
             if self.wandb_project is not None:
-                log_dict = {}
                 log_dict["val/loss"] = val_loss
                 if self.produces_pixel_predictions():
                     log_dict["val/acc"] = val_mean_acc
@@ -282,6 +298,7 @@ class GenericUnet:
                 log_dict["val/rmseprops_on_chip"] = val_mean_rmse
                 wandb.log(log_dict)
 
+            # log to screen
             print (f"epoch {epoch:3d}, train loss {tr_loss:.5f}", flush=True)
             print (f"epoch {epoch:3d},   val loss {val_loss:.5f} {txt_metrics}", flush=True)
 
@@ -336,62 +353,66 @@ class GenericUnet:
 
 class CustomUnetSegmentation(GenericUnet):
 
+    def __init__(self, initializer='he_normal', input_shape=(96,96,3)):
+        self.initializer = initializer    
+        self.input_shape = input_shape
+    
     def get_name(self):
         return "custom_unet"
 
     def get_models(self):
-        input_shape=(96,96,3)
+        input_shape=self.input_shape
         # Build U-Net model
         inputs = Input(input_shape)
         s = Lambda(lambda x: x / 255) (inputs)
 
-        c1 = Conv2D(16, (3, 3), activation='elu', kernel_initializer='he_normal', padding='same') (s)
+        c1 = Conv2D(16, (3, 3), activation='elu', kernel_initializer=self.initializer, padding='same') (s)
         c1 = Dropout(0.1) (c1)
-        c1 = Conv2D(16, (3, 3), activation='elu', kernel_initializer='he_normal', padding='same') (c1)
+        c1 = Conv2D(16, (3, 3), activation='elu', kernel_initializer=self.initializer, padding='same') (c1)
         p1 = MaxPooling2D((2, 2)) (c1)
 
-        c2 = Conv2D(32, (3, 3), activation='elu', kernel_initializer='he_normal', padding='same') (p1)
+        c2 = Conv2D(32, (3, 3), activation='elu', kernel_initializer=self.initializer, padding='same') (p1)
         c2 = Dropout(0.1) (c2)
-        c2 = Conv2D(32, (3, 3), activation='elu', kernel_initializer='he_normal', padding='same') (c2)
+        c2 = Conv2D(32, (3, 3), activation='elu', kernel_initializer=self.initializer, padding='same') (c2)
         p2 = MaxPooling2D((2, 2)) (c2)
 
-        c3 = Conv2D(64, (3, 3), activation='elu', kernel_initializer='he_normal', padding='same') (p2)
+        c3 = Conv2D(64, (3, 3), activation='elu', kernel_initializer=self.initializer, padding='same') (p2)
         c3 = Dropout(0.2) (c3)
-        c3 = Conv2D(64, (3, 3), activation='elu', kernel_initializer='he_normal', padding='same') (c3)
+        c3 = Conv2D(64, (3, 3), activation='elu', kernel_initializer=self.initializer, padding='same') (c3)
         p3 = MaxPooling2D((2, 2)) (c3)
 
-        c4 = Conv2D(128, (3, 3), activation='elu', kernel_initializer='he_normal', padding='same') (p3)
+        c4 = Conv2D(128, (3, 3), activation='elu', kernel_initializer=self.initializer, padding='same') (p3)
         c4 = Dropout(0.2) (c4)
-        c4 = Conv2D(128, (3, 3), activation='elu', kernel_initializer='he_normal', padding='same') (c4)
+        c4 = Conv2D(128, (3, 3), activation='elu', kernel_initializer=self.initializer, padding='same') (c4)
         p4 = MaxPooling2D(pool_size=(2, 2)) (c4)
 
-        c5 = Conv2D(256, (3, 3), activation='elu', kernel_initializer='he_normal', padding='same') (p4)
+        c5 = Conv2D(256, (3, 3), activation='elu', kernel_initializer=self.initializer, padding='same') (p4)
         c5 = Dropout(0.3) (c5)
-        c5 = Conv2D(256, (3, 3), activation='elu', kernel_initializer='he_normal', padding='same') (c5)
+        c5 = Conv2D(256, (3, 3), activation='elu', kernel_initializer=self.initializer, padding='same') (c5)
 
         u6 = Conv2DTranspose(128, (2, 2), strides=(2, 2), padding='same') (c5)
         u6 = concatenate([u6, c4])
-        c6 = Conv2D(128, (3, 3), activation='elu', kernel_initializer='he_normal', padding='same') (u6)
+        c6 = Conv2D(128, (3, 3), activation='elu', kernel_initializer=self.initializer, padding='same') (u6)
         c6 = Dropout(0.2) (c6)
-        c6 = Conv2D(128, (3, 3), activation='elu', kernel_initializer='he_normal', padding='same') (c6)
+        c6 = Conv2D(128, (3, 3), activation='elu', kernel_initializer=self.initializer, padding='same') (c6)
 
         u7 = Conv2DTranspose(64, (2, 2), strides=(2, 2), padding='same') (c6)
         u7 = concatenate([u7, c3])
-        c7 = Conv2D(64, (3, 3), activation='elu', kernel_initializer='he_normal', padding='same') (u7)
+        c7 = Conv2D(64, (3, 3), activation='elu', kernel_initializer=self.initializer, padding='same') (u7)
         c7 = Dropout(0.2) (c7)
-        c7 = Conv2D(64, (3, 3), activation='elu', kernel_initializer='he_normal', padding='same') (c7)
+        c7 = Conv2D(64, (3, 3), activation='elu', kernel_initializer=self.initializer, padding='same') (c7)
 
         u8 = Conv2DTranspose(32, (2, 2), strides=(2, 2), padding='same') (c7)
         u8 = concatenate([u8, c2])
-        c8 = Conv2D(32, (3, 3), activation='elu', kernel_initializer='he_normal', padding='same') (u8)
+        c8 = Conv2D(32, (3, 3), activation='elu', kernel_initializer=self.initializer, padding='same') (u8)
         c8 = Dropout(0.1) (c8)
-        c8 = Conv2D(32, (3, 3), activation='elu', kernel_initializer='he_normal', padding='same') (c8)
+        c8 = Conv2D(32, (3, 3), activation='elu', kernel_initializer=self.initializer, padding='same') (c8)
 
         u9 = Conv2DTranspose(16, (2, 2), strides=(2, 2), padding='same') (c8)
         u9 = concatenate([u9, c1], axis=3)
-        c9 = Conv2D(16, (3, 3), activation='elu', kernel_initializer='he_normal', padding='same') (u9)
+        c9 = Conv2D(16, (3, 3), activation='elu', kernel_initializer=self.initializer, padding='same') (u9)
         c9 = Dropout(0.1) (c9)
-        c9 = Conv2D(16, (3, 3), activation='elu', kernel_initializer='he_normal', padding='same') (c9)
+        c9 = Conv2D(16, (3, 3), activation='elu', kernel_initializer=self.initializer, padding='same') (c9)
 
         outputs = Conv2D(len(self.class_weights), (1, 1), activation='softmax') (c9)
 
@@ -544,3 +565,29 @@ class PatchClassifierSegmentation(GenericUnet):
 
     def get_name(self):
         return f"patch_classifier_segm"
+
+
+class ConvolutionsRegression(GenericUnet):
+    
+    def __init__(self, backbone, input_shape=(96,96,3)):
+        """
+        backbone: a class under tensorflow.keras.applications
+        """
+        self.backbone = backbone
+        self.input_shape = input_shape
+    
+    def get_name(self):
+        return f"convregr_{self.backbone.__name__}"
+    
+    def produces_pixel_predictions(self):
+        return False    
+    
+    def get_models(self):
+        inputs = Input(self.input_shape)
+        backcone_output  = self.backbone(include_top=False, weights=None, input_tensor=inputs)(inputs)
+        flat   = Flatten()(backcone_output)
+        dense1 = Dense(1024, activation="relu")(flat)
+        dense2 = Dense(1024, activation="relu")(dense1)
+        outputs = Dense(self.number_of_classes, activation='softmax')(dense2)
+        model = Model([inputs], [outputs])
+        return model, model
