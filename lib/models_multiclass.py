@@ -179,19 +179,20 @@ class GenericUnet:
 
         # if there are no class weights, assume equal weight for all classes
         # as defined in the dataloader
-        if wandb_project is not None:
-            wconfig = self.get_wandb_config()
-            wandb.init(project=wandb_project, entity=wandb_entity, 
-                        name=self.run_name, config=wconfig)
-            self.run_id = wandb.run.id
-            self.run_file_path = os.path.join(self.outdir, self.run_id + ".h5")            
-        else:
-            self.run_file_path = get_next_file_path(self.outdir, "run","h5")
-            self.run_id = os.path.basename(self.run_file_path)[:-3]
         if file_run_id is None:
             self.init_model_params()
+            if wandb_project is not None:
+                wconfig = self.get_wandb_config()
+                wandb.init(project=wandb_project, entity=wandb_entity, 
+                            name=self.run_name, config=wconfig)
+                self.run_id = wandb.run.id
+            else:
+                run_file_path = get_next_file_path(self.outdir, "run","h5")
+                self.run_id = os.path.basename(run_file_path)[:-3]
         else:
-            self.train_model.load_weights(outdir + '/' + file_run_id + '.h5')
+            self.run_id = file_run_id
+            run_file_path = os.path.join(self.outdir, self.run_id + ".h5")            
+            self.train_model.load_weights(run_file_path)
         return self
 
     def init_model_params(self):
@@ -300,6 +301,7 @@ class GenericUnet:
         return self.train_model.trainable_variables
 
     def fit(self, epochs=10, max_steps=np.inf):
+        run_file_path = os.path.join(self.outdir, self.run_id + ".h5")            
         tr_loss = 0
         min_val_loss = np.inf
         for epoch in range(epochs):
@@ -347,7 +349,7 @@ class GenericUnet:
             # save model if better val loss
             if val_loss < min_val_loss:
                 min_val_loss = val_loss
-                self.train_model.save_weights(self.run_file_path)
+                self.train_model.save_weights(run_file_path)
                 
             # log to wandb
             if self.wandb_project is not None:
@@ -400,14 +402,10 @@ class GenericUnet:
         runs summary_dataset over train, val and test
         returns a dataframe with dataset rows and loss/metric columns
         """
-        self.train_model.load_weights(self.run_file_path)
+        run_file_path = os.path.join(self.outdir, self.run_id + ".h5")            
+        self.train_model.load_weights(run_file_path)
         r = [self.summary_dataset(i) for i in ['train', 'val', 'test']]
         r = pd.DataFrame(r, index = ['train', 'val', 'test'])
-        csv_path = self.run_file_path[:-3] + ".csv"
-        r.to_csv(csv_path)
-        params_path = self.run_file_path[:-3] + ".params"
-        with open(params_path, 'w') as f:
-            f.write(repr(self.get_wandb_config()))
         return r
 
 
