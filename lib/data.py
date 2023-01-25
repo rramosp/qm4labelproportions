@@ -116,7 +116,8 @@ class S2LandcoverDataGenerator(tf.keras.utils.Sequence):
     from https://stanford.edu/~shervine/blog/keras-how-to-generate-data-on-the-fly
     """
     @classmethod
-    def split(cls, basedir, train_size=0.7, test_size=0.3, val_size=0.0, cache_size=1000, max_chips=None, **kwargs):
+    def split(cls, basedir=None, train_size=0.7, test_size=0.2, val_size=0.1, cache_size=1000, max_chips=None, **kwargs):
+        assert basedir is not None, "must set 'basedir'"
         assert np.abs(train_size + test_size + val_size - 1) < 1e-7
         assert not 'cache_size' in kwargs.keys()
         assert not 'chips_basedirs' in kwargs.keys()
@@ -149,10 +150,11 @@ class S2LandcoverDataGenerator(tf.keras.utils.Sequence):
         return tr, ts, val
 
     @classmethod
-    def split_per_partition(cls, split_file, partitions_id=None, cache_size=1000, max_chips=None, **kwargs):
+    def split_per_partition(cls, split_file=None, partitions_id=None, cache_size=1000, max_chips=None, **kwargs):
         """
         creates three data loaders according to splits as defined in split_file
         """
+        assert split_file is not None, "must set 'split_file'"
         assert partitions_id is not None, "must set 'partitions_id'"
 
         
@@ -188,7 +190,7 @@ class S2LandcoverDataGenerator(tf.keras.utils.Sequence):
         # split also the cache sizes
         train_size = len(split_files['train'])
         test_size = len(split_files['test'])
-        val_size = len(split_files['train'])
+        val_size = len(split_files['val'])
         total_size = train_size + test_size + val_size    
 
         tr_cache_size = int(cache_size * train_size / total_size)
