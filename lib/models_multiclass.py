@@ -47,6 +47,7 @@ class GenericUnet:
         l = l[:,2:-2,2:-2]
         return x,l
 
+    """
     def init_run(self, datadir,
                  outdir,
                  learning_rate, 
@@ -64,38 +65,52 @@ class GenericUnet:
                  n_batches_online_val = np.inf,
                  max_chips = None
                 ):
+    """
+
+    def init_run(self,
+                 outdir,
+                 learning_rate, 
+                 loss='multiclass_proportions_rmse',
+                 wandb_project = 'qm4labelproportions',
+                 wandb_entity = 'rramosp',
+
+                 data_generator_split_method = data.S2_ESAWorldCover_DataGenerator.split,
+                 data_generator_split_args   = dict(
+                        basedir = None,
+                        partitions_id = 'aschip',
+                        batch_size = 32,
+                        train_size = 0.7,
+                        test_size = 0.1, 
+                        val_size = 0.2,
+                        cache_size = 10000,
+                        shuffle = True,
+                        max_chips = None
+                 ),
+
+                 class_weights = None,
+                 n_batches_online_val = np.inf,
+                ):
+
 
         print (f"initializing {self.get_name()}")
 
+        assert 'partitions_id' in data_generator_split_args.keys(), "'data_generator_split_args' must have 'partitions_id'"
+
+        self.partitions_id = data_generator_split_args['partitions_id']
         self.learning_rate = learning_rate
         self.loss_name = loss
-        self.cache_size = cache_size
-        self.partitions_id = partitions_id
+        self.data_generator_split_method = data_generator_split_method
+        self.data_generator_split_args = data_generator_split_args
         self.wandb_project = wandb_project
         self.wandb_entity = wandb_entity
         self.class_weights = class_weights
         self.n_batches_online_val = n_batches_online_val 
 
-        self.train_size = train_size
-        self.val_size   = val_size
-        self.test_size  = test_size
-        self.batch_size = batch_size
-        self.datadir = datadir
         self.outdir = outdir
         if not os.path.exists(outdir):
             os.makedirs(outdir)
 
-        self.tr, self.ts, self.val = data_generator_class.split(
-                basedir = self.datadir,
-                partitions_id = partitions_id,
-                batch_size = self.batch_size,
-                train_size = self.train_size,
-                test_size = self.test_size, 
-                val_size = self.val_size,
-                cache_size = cache_size,
-                shuffle = True,
-                max_chips = max_chips
-            )
+        self.tr, self.ts, self.val = data_generator_split_method(**data_generator_split_args)
 
         if self.class_weights is None:
             nclasses = self.tr.number_of_classes
@@ -435,12 +450,14 @@ class SMUnetSegmentation(GenericUnet):
       return w
 
     def get_models(self):
-        unet = model = sm.Unet(input_shape=(None,None,3), 
-                               **self.sm_keywords)
+        self.unet = sm.Unet(input_shape=(None,None,3), 
+                            classes = self.number_of_classes, 
+                            activation = 'softmax',
+                            **self.sm_keywords)
 
         inp = tf.keras.layers.Input(shape=(None, None, 3))
-        out = unet(inp)
-        out = tf.keras.layers.Conv2D(len(self.class_weights), (1,1), padding='same', activation='softmax')(out)
+        out = self.unet(inp)
+        #out = tf.keras.layers.Conv2D(len(self.class_weights), (1,1), padding='same', activation='softmax')(out)
         m = tf.keras.models.Model([inp], [out])
         return m, m
 
