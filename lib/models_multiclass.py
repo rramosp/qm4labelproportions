@@ -61,18 +61,14 @@ class GenericUnet:
 
 
     @staticmethod
-    def restore_init_from_file(datadir,
+    def restore_init_from_file(
                  outdir, 
-                 file_run_id=None,
-                 data_generator_class = data.S2LandcoverDataGenerator, 
-                 train_size=.7, 
-                 val_size=0.2, 
-                 test_size=0.1,
+                 file_run_id,
+                 data_generator_split_method = data.S2_ESAWorldCover_DataGenerator.split,
+                 data_generator_split_args = None,
                  wandb_project = None,
                  wandb_entity = None,                 
-                 cache_size = 10000,
-                 n_batches_online_val = np.inf,
-                 max_chips = None):
+                 n_batches_online_val = np.inf):
         with open(outdir + '/' + file_run_id + '.params') as f:
             init_args = eval(f.read())
         model_class =eval(init_args.pop('model_class'))
@@ -84,23 +80,16 @@ class GenericUnet:
         init_args.pop('trainable_params') 
         init_args.pop('non_trainable_params')
         model = model_class(**init_args)
-        model.init_run(datadir=datadir,
-                 outdir=outdir,
-                 learning_rate=learning_rate, 
+        model.init_run(outdir=outdir,
+                 learning_rate=learning_rate,
                  file_run_id=file_run_id,
-                 data_generator_class=data_generator_class,
-                 batch_size=batch_size, 
-                 train_size=train_size, 
-                 val_size=val_size, 
-                 test_size=test_size,
                  loss=loss,
-                 wandb_project=wandb_project,
-                 wandb_entity=wandb_entity,
-                 partitions_id=partitions_id,
-                 cache_size=cache_size,
+                 wandb_project = wandb_project,
+                 wandb_entity = wandb_entity,
+                 data_generator_split_method=data_generator_split_method,
+                 data_generator_split_args=data_generator_split_args,
                  class_weights=class_weights,
-                 n_batches_online_val=n_batches_online_val,
-                 max_chips=max_chips
+                 n_batches_online_val=n_batches_online_val
                 )
         return model
 
@@ -132,10 +121,11 @@ class GenericUnet:
 
     def init_run(self,
                  outdir,
-                 learning_rate, 
+                 learning_rate,
+                 file_run_id=None,
                  loss='multiclass_proportions_rmse',
                  wandb_project = 'qm4labelproportions',
-                 wandb_entity = 'rramosp',
+                 wandb_entity = 'mindlab',
 
                  data_generator_split_method = data.S2_ESAWorldCover_DataGenerator.split,
                  data_generator_split_args   = dict(
