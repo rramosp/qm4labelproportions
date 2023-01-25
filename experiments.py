@@ -101,14 +101,13 @@ def run_experiment(data_generator_split_method,
                    init_args,
                    learning_rate=0.0001,
                    loss='multiclass_proportions_mse', 
-                   partitions_id =  'aschips',
                    epochs=10, 
                    class_weights=None,
                    wproject=None,
                    wentity=None,
                    n_batches_online_val = np.inf,
                    ):
-    print ("\n---------", partitions_id, "------------")
+    print ("\n---------", data_generator_split_args['partitions_id'], "------------")
     print ("using loss", loss) 
 
     pcs = model_class(**init_args)
