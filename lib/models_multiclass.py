@@ -70,7 +70,7 @@ class GenericUnet:
     def init_run(self,
                  outdir,
                  learning_rate, 
-                 loss='multiclass_proportions_rmse',
+                 loss='multiclass_proportions_mse',
                  wandb_project = 'qm4labelproportions',
                  wandb_entity = 'rramosp',
 
@@ -91,10 +91,10 @@ class GenericUnet:
                  n_batches_online_val = np.inf,
                 ):
 
-
         print (f"initializing {self.get_name()}")
 
-        assert 'partitions_id' in data_generator_split_args.keys(), "'data_generator_split_args' must have 'partitions_id'"
+        assert 'partitions_id' in data_generator_split_args.keys(), \
+               "'data_generator_split_args' must have 'partitions_id'"
 
         self.partitions_id = data_generator_split_args['partitions_id']
         self.learning_rate = learning_rate
@@ -110,19 +110,32 @@ class GenericUnet:
         if not os.path.exists(outdir):
             os.makedirs(outdir)
 
+        if class_weights is None:
+            selected_classids = None
+        else:
+            # if class weights was specified, it could have a selection of classes
+            # which will be mapped to 0..number_of_selected_classes
+            if not 0 in class_weights.keys():
+                class_weights[0] = 0
+            selected_classids = sorted(class_weights.keys())
+            self.original_class_weights = class_weights
+            self.class_weights = {i:class_weights[k] for i,k in enumerate(selected_classids)}
+
+        data_generator_split_args['selected_classids'] = selected_classids
         self.tr, self.ts, self.val = data_generator_split_method(**data_generator_split_args)
 
-        if self.class_weights is None:
-            nclasses = self.tr.number_of_classes
-            self.class_weights = {i:1/nclasses for i in range(nclasses)}
+        self.number_of_classes = self.tr.number_of_output_classes
 
-        self.number_of_classes = len(self.class_weights)
+        # if there are no classweights, set class 0 weight to zero and the rest equal
+        if self.class_weights is None:
+            n = self.number_of_classes
+            self.class_weights = {i: 0 if i==0 else 1/(n-1) for i in range(n)}
 
         self.run_name = f"{self.get_name()}-{self.partitions_id}-{self.loss_name}-{datetime.now().strftime('%Y%m%d[%H%M]')}"
         self.train_model, self.val_model = self.get_models()
         self.opt = tf.keras.optimizers.Adam(learning_rate = self.learning_rate)
 
-        self.metrics = metrics.ProportionsMetrics(class_weights = class_weights, number_of_classes=self.tr.number_of_classes)
+        self.metrics = metrics.ProportionsMetrics(class_weights = self.class_weights)
 
         # if there are no class weights, assume equal weight for all classes
         # as defined in the dataloader
@@ -187,10 +200,10 @@ class GenericUnet:
 
         accs = []
         ious = []
-        mseprops_onchip = []
+        maeprops_onchip = []
         for i in range(len(val_x)):
-            msep = self.metrics.multiclass_proportions_rmse_on_chip(val_l[i:i+1], val_out[i:i+1])
-            mseprops_onchip.append(msep)
+            maec = self.metrics.multiclass_proportions_mae_on_chip(val_l[i:i+1], val_out[i:i+1])
+            maeprops_onchip.append(maec)
             if self.produces_pixel_predictions():
                 acc = self.metrics.compute_accuracy(val_l[i:i+1], val_out[i:i+1])
                 accs.append(acc)
@@ -208,7 +221,7 @@ class GenericUnet:
             if i==0: plt.ylabel("labels")
 
         for ax,i in subplots(len(val_out)):
-            title = f"onchip: rmseprop {mseprops_onchip[i]:.4f}"
+            title = f"onchip: maeprop {maeprops_onchip[i]:.4f}"
             if self.produces_pixel_predictions():
                 title += f"\nacc {accs[i]:.3f}"
                 title += f"  iou {ious[i]:.3f}"
@@ -243,8 +256,6 @@ class GenericUnet:
     def get_loss(self, out, p, l): 
         if self.loss_name == 'multiclass_proportions_mse':
             return self.metrics.multiclass_proportions_mse(p, out)
-        if self.loss_name == 'multiclass_proportions_rmse':
-            return self.metrics.multiclass_proportions_rmse(p, out)
         if self.loss_name == 'multiclass_LSRN_loss':
             return self.metrics.multiclass_LSRN_loss(p, out)
         raise ValueError(f"unkown loss '{self.loss_name}'")
@@ -278,7 +289,7 @@ class GenericUnet:
             log_dict['train/loss'] = tr_loss
             
             # measure stuff on validation for reporting
-            losses, accs, ious, rmseps = [], [], [], []
+            losses, accs, ious, maeps = [], [], [], []
             max_value = np.min([len(self.val),self.n_batches_online_val ])
             for i, (x, (p,l)) in pbar(enumerate(self.val), max_value=max_value):
                 if i>=self.n_batches_online_val:
@@ -287,15 +298,15 @@ class GenericUnet:
                 out = self.predict(x)
                 loss = self.get_loss(out,p,l).numpy()
                 losses.append(loss)
-                rmseps.append(self.metrics.multiclass_proportions_rmse_on_chip(l, out))
+                maeps.append(self.metrics.multiclass_proportions_mae_on_chip(l, out))
                 if self.produces_pixel_predictions():
                     accs.append(self.metrics.compute_accuracy(l, out))
                     ious.append(self.metrics.compute_iou(l,out))
                     
             # summarize validation stuff
             val_loss = np.mean(losses)
-            val_mean_rmse = np.mean(rmseps)
-            txt_metrics = f"rmse {val_mean_rmse:.5f}"
+            val_mean_mae = np.mean(maeps)
+            txt_metrics = f"mae {val_mean_mae:.5f}"
             if self.produces_pixel_predictions():
                 val_mean_acc = np.mean(accs)
                 val_mean_iou = np.mean(ious)
@@ -312,7 +323,7 @@ class GenericUnet:
                 if self.produces_pixel_predictions():
                     log_dict["val/acc"] = val_mean_acc
                     log_dict["val/iou"] = val_mean_iou
-                log_dict["val/rmseprops_on_chip"] = val_mean_rmse
+                log_dict["val/maeprops_on_chip"] = val_mean_mae
                 wandb.log(log_dict)
 
             # log to screen
@@ -329,7 +340,7 @@ class GenericUnet:
         else:
             dataset = self.ts
 
-        losses, accs, mseps, ious = [], [], [], []
+        losses, accs, maeps, ious = [], [], [], []
         for x, (p,l) in pbar(dataset):
             x,l = self.normitem(x,l)
             out = self.predict(x)
@@ -340,15 +351,15 @@ class GenericUnet:
                 iou = self.metrics.compute_iou(l, out)
                 ious.append(iou)
                 
-            msep =  self.metrics.multiclass_proportions_rmse_on_chip(l, out).numpy()
+            maep =  self.metrics.multiclass_proportions_mae_on_chip(l, out).numpy()
             losses.append(loss)
-            mseps.append(msep)
+            maeps.append(maep)
             
-        r = {'loss': np.mean(losses), 'rmseprops_on_chip': np.mean(mseps)}
+        r = {'loss': np.mean(losses), 'maeprops_on_chip': np.mean(maeps)}
         
-        if self.produces_pixel_predictions():
+        if self.produces_pixel_predictions(): 
             r['accuracy'] = np.mean(accs)
-            r['iou'] = np.mean(iou)
+            r['iou'] = np.mean(ious)
 
         return r
     
@@ -431,7 +442,7 @@ class CustomUnetSegmentation(GenericUnet):
         c9 = Dropout(0.1) (c9)
         c9 = Conv2D(16, (3, 3), activation='elu', kernel_initializer=self.initializer, padding='same') (c9)
 
-        outputs = Conv2D(len(self.class_weights), (1, 1), activation='softmax') (c9)
+        outputs = Conv2D(self.number_of_classes, (1, 1), activation='softmax') (c9)
 
         model = Model(inputs=[inputs], outputs=[outputs])
         
@@ -457,8 +468,7 @@ class SMUnetSegmentation(GenericUnet):
 
         inp = tf.keras.layers.Input(shape=(None, None, 3))
         out = self.unet(inp)
-        #out = tf.keras.layers.Conv2D(len(self.class_weights), (1,1), padding='same', activation='softmax')(out)
-        m = tf.keras.models.Model([inp], [out])
+        m   = tf.keras.models.Model([inp], [out])
         return m, m
 
 
@@ -526,8 +536,8 @@ class PatchProportionsRegression(GenericUnet):
         # Apply dropout.
         x = tf.keras.layers.Dropout(rate=self.dropout_rate)(x)
         # Label proportions prediction layer
-        probs = tf.keras.layers.Dense(len(self.class_weights), activation=self.activation)(x)
-        out   = tf.reshape(probs, [-1, patch_extr.num_patches, patch_extr.num_patches, len(self.class_weights)])
+        probs = tf.keras.layers.Dense(self.number_of_classes, activation=self.activation)(x)
+        out   = tf.reshape(probs, [-1, patch_extr.num_patches, patch_extr.num_patches, self.number_of_classes])
 
         m = tf.keras.models.Model([inputs], [out])
         return m, m
@@ -565,14 +575,14 @@ class PatchClassifierSegmentation(GenericUnet):
         # Apply dropout.
         x = tf.keras.layers.Dropout(rate=self.dropout_rate)(x)
         # Label proportions prediction layer
-        probs = tf.keras.layers.Dense(len(self.class_weights), activation="softmax")(x)
+        probs = tf.keras.layers.Dense(self.number_of_classes, activation="softmax")(x)
         # Construct image from label proportions
-        conv2dt = tf.keras.layers.Conv2DTranspose(filters=len(self.class_weights),
+        conv2dt = tf.keras.layers.Conv2DTranspose(filters=self.number_of_classes,
                         kernel_size=self.patch_size,
                         strides=self.pred_strides,
                         trainable=True,
                         activation='softmax')
-        probs = tf.reshape(probs, [-1, patch_extr.num_patches, patch_extr.num_patches, len(self.class_weights)])
+        probs = tf.reshape(probs, [-1, patch_extr.num_patches, patch_extr.num_patches, self.number_of_classes])
         out = conv2dt(probs)
         m = tf.keras.models.Model([inputs], [out])
         return m, m
