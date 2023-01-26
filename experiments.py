@@ -1,4 +1,5 @@
 import psutil
+import os
 import numpy as np
 import pandas as pd
 from .lib import data
@@ -128,6 +129,11 @@ def run_experiment(data_generator_split_method,
     pcs.fit(epochs=epochs)
     pcs.plot_val_sample(10); plt.show()
     r = pcs.summary_result()
+    csv_path = os.path.join(outdir, pcs.run_id + '.csv')
+    r.to_csv(csv_path)
+    params_path = os.path.join(outdir, pcs.run_id + ".params")
+    with open(params_path, 'w') as f:
+        f.write(repr(pcs.get_wandb_config()))
     pcs.empty_caches()
     print (r)
     return pcs
