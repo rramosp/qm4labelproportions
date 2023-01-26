@@ -1,3 +1,5 @@
+import tensorflow as tf
+tfkl = tf.keras.layers
 from tensorflow.keras.layers import Conv2D, Dropout, MaxPooling2D, Conv2DTranspose, Input, Flatten, concatenate, Lambda, Dense
 from tensorflow.keras.models import Model
 import tensorflow as tf
@@ -42,37 +44,67 @@ class GenericUnet:
       # just to have a constructor accepting parameters
       pass
 
+    def get_wandb_config(self):
+        self.trainable_params = sum(count_params(layer) for layer in self.train_model.trainable_weights)
+        self.non_trainable_params = sum(count_params(layer) for layer in self.train_model.non_trainable_weights)
+        wconfig = {
+            "model_class":self.__class__.__name__,
+            "learning_rate":self.learning_rate,
+            "batch_size":self.tr.batch_size,
+            'trainable_params':self.trainable_params,
+            'non_trainable_params':self.non_trainable_params,
+            'class_weights':self.class_weights,
+            'loss': self.loss_name,
+            'partitions_id':self.partitions_id
+        }
+        return wconfig
+
+
+    @staticmethod
+    def restore_init_from_file(
+                 outdir, 
+                 file_run_id,
+                 data_generator_split_method = data.S2_ESAWorldCover_DataGenerator.split,
+                 data_generator_split_args = None,
+                 wandb_project = None,
+                 wandb_entity = None,                 
+                 n_batches_online_val = np.inf):
+        with open(outdir + '/' + file_run_id + '.params') as f:
+            init_args = eval(f.read())
+        model_class =eval(init_args.pop('model_class'))
+        loss = init_args.pop('loss', 'multiclass_proportions_mse')
+        learning_rate = init_args.pop('learning_rate', 1e-4)
+        batch_size = init_args.pop('batch_size', 32)
+        class_weights = init_args.pop('class_weights', None)
+        partitions_id = init_args.pop('partitions_id', 'aschip')
+        init_args.pop('trainable_params') 
+        init_args.pop('non_trainable_params')
+        model = model_class(**init_args)
+        model.init_run(outdir=outdir,
+                 learning_rate=learning_rate,
+                 file_run_id=file_run_id,
+                 loss=loss,
+                 wandb_project = wandb_project,
+                 wandb_entity = wandb_entity,
+                 data_generator_split_method=data_generator_split_method,
+                 data_generator_split_args=data_generator_split_args,
+                 class_weights=class_weights,
+                 n_batches_online_val=n_batches_online_val
+                )
+        return model
+
     def normitem(self, x,l):
         x = x[:,2:-2,2:-2,:]
         l = l[:,2:-2,2:-2]
         return x,l
 
-    """
-    def init_run(self, datadir,
-                 outdir,
-                 learning_rate, 
-                 data_generator_class = data.S2LandcoverDataGenerator,
-                 batch_size=32, 
-                 train_size=.7, 
-                 val_size=0.2, 
-                 test_size=0.1,
-                 loss='multiclass_proportions_mse',
-                 wandb_project = 'qm4labelproportions',
-                 wandb_entity = 'rramosp',
-                 partitions_id = 'aschips',
-                 cache_size = 10000,
-                 class_weights = None,
-                 n_batches_online_val = np.inf,
-                 max_chips = None
-                ):
-    """
-
     def init_run(self,
                  outdir,
-                 learning_rate, 
+                 learning_rate,
+                 file_run_id=None,
                  loss='multiclass_proportions_mse',
                  wandb_project = 'qm4labelproportions',
-                 wandb_entity = 'rramosp',
+                 wandb_entity = 'mindlab',
 
                  data_generator_split_method = data.S2_ESAWorldCover_DataGenerator.split,
                  data_generator_split_args   = dict(
@@ -139,17 +171,20 @@ class GenericUnet:
 
         # if there are no class weights, assume equal weight for all classes
         # as defined in the dataloader
-        if wandb_project is not None:
-            wconfig = self.get_wandb_config()
-            wandb.init(project=wandb_project, entity=wandb_entity, 
-                        name=self.run_name, config=wconfig)
-            self.run_id = wandb.run.id
-            self.run_file_path = os.path.join(self.outdir, self.run_id + ".h5")            
+        if file_run_id is None:
+            self.init_model_params()
+            if wandb_project is not None:
+                wconfig = self.get_wandb_config()
+                wandb.init(project=wandb_project, entity=wandb_entity, 
+                            name=self.run_name, config=wconfig)
+                self.run_id = wandb.run.id
+            else:
+                run_file_path = get_next_file_path(self.outdir, "run","h5")
+                self.run_id = os.path.basename(run_file_path)[:-3]
         else:
-            self.run_file_path = get_next_file_path(self.outdir, "run","h5")
-            self.run_id = os.path.basename(self.run_file_path)[:-3]
-        self.init_model_params()
-        print ()
+            self.run_id = file_run_id
+            run_file_path = os.path.join(self.outdir, self.run_id + ".h5")            
+            self.train_model.load_weights(run_file_path)
         return self
 
     def init_model_params(self):
@@ -167,18 +202,6 @@ class GenericUnet:
     def produces_pixel_predictions(self):
         return True    
     
-    def get_wandb_config(self):
-        self.trainable_params = sum(count_params(layer) for layer in self.train_model.trainable_weights)
-        self.non_trainable_params = sum(count_params(layer) for layer in self.train_model.non_trainable_weights)
-        wconfig = {
-            "learning_rate": self.learning_rate,
-            "batch_size": self.tr.batch_size,
-            'trainable_params': self.trainable_params,
-            'non_trainable_params': self.non_trainable_params,
-            'loss': self.loss_name
-        }
-        return wconfig
-
     def get_val_sample(self, n=10):
         batch_size_backup = self.val.batch_size
         self.val.batch_size = n
@@ -268,6 +291,7 @@ class GenericUnet:
         return self.train_model.trainable_variables
 
     def fit(self, epochs=10, max_steps=np.inf):
+        run_file_path = os.path.join(self.outdir, self.run_id + ".h5")            
         tr_loss = 0
         min_val_loss = np.inf
         for epoch in range(epochs):
@@ -315,7 +339,7 @@ class GenericUnet:
             # save model if better val loss
             if val_loss < min_val_loss:
                 min_val_loss = val_loss
-                self.train_model.save_weights(self.run_file_path)
+                self.train_model.save_weights(run_file_path)
                 
             # log to wandb
             if self.wandb_project is not None:
@@ -368,14 +392,10 @@ class GenericUnet:
         runs summary_dataset over train, val and test
         returns a dataframe with dataset rows and loss/metric columns
         """
-        self.train_model.load_weights(self.run_file_path)
+        run_file_path = os.path.join(self.outdir, self.run_id + ".h5")            
+        self.train_model.load_weights(run_file_path)
         r = [self.summary_dataset(i) for i in ['train', 'val', 'test']]
         r = pd.DataFrame(r, index = ['train', 'val', 'test'])
-        csv_path = self.run_file_path[:-3] + ".csv"
-        r.to_csv(csv_path)
-        params_path = self.run_file_path[:-3] + ".params"
-        with open(params_path, 'w') as f:
-            f.write(repr(self.get_wandb_config()))
         return r
 
 
@@ -385,6 +405,12 @@ class CustomUnetSegmentation(GenericUnet):
         self.initializer = initializer    
         self.input_shape = input_shape
     
+    def get_wandb_config(self):
+        wconfig = super().get_wandb_config()
+        wconfig['initializer'] = self.initializer
+        wconfig['input_shape'] = self.input_shape
+        return wconfig
+
     def get_name(self):
         return "custom_unet"
 
@@ -456,9 +482,9 @@ class SMUnetSegmentation(GenericUnet):
         self.backbone = self.sm_keywords['backbone_name']
 
     def get_wandb_config(self):
-      w = super().get_wandb_config()
-      w.update(self.sm_keywords)
-      return w
+        w = super().get_wandb_config()
+        w.update(self.sm_keywords)
+        return w
 
     def get_models(self):
         self.unet = sm.Unet(input_shape=(None,None,3), 
@@ -520,11 +546,14 @@ class PatchProportionsRegression(GenericUnet):
         self.activation = activation
 
     def get_wandb_config(self):
-      w = super().get_wandb_config()
-      w.update({'patch_size':self.patch_size, 
-                'pred_strides': self.pred_strides,
-                'num_units':self.num_units})
-      return w
+        w = super().get_wandb_config()
+        w.update({'input_shape':self.input_shape,
+                    'patch_size':self.patch_size, 
+                    'pred_strides': self.pred_strides,
+                    'num_units':self.num_units,
+                    'dropout_rate':self.dropout_rate,
+                    'activation':self.activation})
+        return w
 
     def get_models(self):
         inputs = tf.keras.layers.Input(shape=self.input_shape)
@@ -559,11 +588,13 @@ class PatchClassifierSegmentation(GenericUnet):
         self.dropout_rate = dropout_rate
 
     def get_wandb_config(self):
-      w = super().get_wandb_config()
-      w.update({'patch_size':self.patch_size, 
-                'pred_strides': self.pred_strides,
-                'num_units':self.num_units})
-      return w
+        w = super().get_wandb_config()
+        w.update({'input_shape':self.input_shape,
+                    'patch_size':self.patch_size, 
+                    'pred_strides': self.pred_strides,
+                    'num_units':self.num_units,
+                    'dropout_rate':self.dropout_rate})
+        return w
 
     def get_models(self):
         inputs = tf.keras.layers.Input(shape=self.input_shape)
@@ -612,6 +643,13 @@ class ConvolutionsRegression(GenericUnet):
         self.backbone_kwargs = backbone_kwargs
         self.input_shape = input_shape
     
+    def get_wandb_config(self):
+        w = super().get_wandb_config()
+        w.update({'input_shape':self.input_shape,
+                    'backbone':self.backbone, 
+                    'backbone_kwargs': self.backbone_kwargs})
+        return w
+
     def get_name(self):
         r = f"convregr_{self.backbone.__name__}"
 
@@ -632,3 +670,151 @@ class ConvolutionsRegression(GenericUnet):
         outputs = Dense(self.number_of_classes, activation='softmax')(dense2)
         model = Model([inputs], [outputs])
         return model, model
+
+from . import kqm 
+class QMPatchSegmentation(GenericUnet):
+
+    def __init__(self, 
+                input_shape,
+                patch_size, 
+                pred_strides,
+                n_comp,
+                sigma_ini,
+                deep):
+        self.input_shape = input_shape
+        self.patch_size = patch_size 
+        self.pred_strides = pred_strides
+        self.dim_x = patch_size ** 2 * 3
+        self.n_comp = n_comp
+        self.sigma_ini = sigma_ini
+        self.deep = deep
+
+    def get_wandb_config(self):
+        if self.deep:
+            self.trainable_params = sum(count_params(layer) for layer in (
+                self.train_model.trainable_weights + self.deep_model.trainable_weights))
+            self.non_trainable_params = sum(count_params(layer) for 
+                layer in ( self.train_model.non_trainable_weights + 
+                          self.deep_model.non_trainable_weights))
+        else:
+            self.trainable_params = sum(count_params(layer) for layer in (
+                self.train_model.trainable_weights))
+            self.non_trainable_params = sum(count_params(layer) for 
+                layer in self.train_model.non_trainable_weights)
+        w = super().get_wandb_config()
+        w.update({'input_shape':self.input_shape,
+                    'patch_size':self.patch_size, 
+                    'pred_strides': self.pred_strides,
+                    'n_comp':self.n_comp,
+                    'sigma_ini':self.sigma_ini,
+                    'deep':self.deep,
+                    'trainable_params':self.trainable_params,
+                    'non_trainable_params':self.non_trainable_params})
+        return w
+
+    def get_trainable_variables(self):
+        if self.deep:
+            return (self.train_model.trainable_variables +
+                    [self.sigma] +
+                    self.deep_model.trainable_variables)
+        else:
+            return (self.train_model.trainable_variables +
+                    [self.sigma])
+
+    def init_model_params(self):
+        batch_size_backup = self.tr.batch_size
+        self.tr.batch_size = self.n_comp
+        self.tr.on_epoch_end()
+        gen_tr = iter(self.tr) 
+        tr_x, (tr_p, tr_l) = gen_tr.__next__()
+        tr_x, tr_l = self.normitem(tr_x, tr_l)
+        self.predict(tr_x)
+        patch_extr = Patches(self.patch_size, 96, self.patch_size)
+        patches = patch_extr(tr_x)
+        idx = np.random.randint(low=0, high=patch_extr.num_patches ** 2, size=(self.n_comp,))
+        patches = tf.gather(patches, idx, axis=1, batch_dims=1)
+        self.kqmu.c_x.assign(patches)
+        #y = tf.concat([tr_p[:,2:3], 1. - tr_p[:,2:3]], axis=1)
+        #y = tf.gather(tr_p, self.metrics.class_ids, axis=1)
+        #self.kqmu.c_y.assign(y)
+        # restore val dataset config
+        self.tr.batch_size = batch_size_backup
+        self.tr.on_epoch_end()
+        return 
+
+    '''
+    def get_loss(self, out, p, l):
+        if self.loss_name == 'multiclass_proportions_mse':
+            p = tf.gather(p, self.metrics.class_ids, axis=1)
+            return tf.keras.losses.mse(out,p)
+    '''
+    def get_models(self):
+        self.sigma = tf.Variable(self.sigma_ini, dtype=tf.float32, trainable=True)       
+        if self.deep:
+            # Lenet Model
+            self.deep_model = tf.keras.Sequential()
+            self.deep_model.add(tfkl.Reshape((self.patch_size, self.patch_size, 3)))
+            self.deep_model.add(tfkl.Conv2D(filters=6, kernel_size=(3, 3), 
+                                            activation='relu', padding='same'))
+            self.deep_model.add(tfkl.AveragePooling2D())
+            self.deep_model.add(tfkl.Conv2D(filters=16, kernel_size=(3, 3), 
+                                            activation='relu', padding='same'))
+            self.deep_model.add(tfkl.AveragePooling2D())
+            self.deep_model.add(tfkl.Flatten())
+            self.deep_model.add(tfkl.Dense(units=120, activation='relu'))
+            self.deep_model.add(tfkl.Dense(units=84, activation='relu'))
+            kernel_x = kqm.create_comp_trans_kernel(self.deep_model, 
+                                                    kqm.create_rbf_kernel(self.sigma))
+        else:
+            kernel_x = kqm.create_rbf_kernel(self.sigma)
+        self.kqmu = kqm.KQMUnit(kernel_x,
+                            dim_x=self.dim_x,
+                            dim_y=self.number_of_classes,
+                            n_comp=self.n_comp
+                            )
+        inputs = tf.keras.layers.Input(shape=self.input_shape)
+        # Create patches.
+        patch_extr = Patches(self.patch_size, 96, self.pred_strides)
+        patches = patch_extr(inputs)
+        # Model for training
+        w = tf.ones_like(patches[:, :, 0]) / (patch_extr.num_patches ** 2)
+        rho_x = kqm.comp2dm(w, patches)
+        rho_y = self.kqmu(rho_x)
+        y_w, y_v = kqm.dm2comp(rho_y)
+        norms_y = tf.expand_dims(tf.linalg.norm(y_v, axis=-1), axis=-1)
+        y_v = y_v / norms_y
+        probs = tf.einsum('...j,...ji->...i', y_w, y_v ** 2, optimize="optimal")
+        probs = probs[:, tf.newaxis, tf.newaxis, :]
+        train_model =  tf.keras.models.Model([inputs], [probs])
+
+        # Model for prediction
+        patch_extr = Patches(self.patch_size, 96, self.pred_strides)
+        patches = patch_extr(inputs)
+        batch_size = tf.shape(patches)[0]
+        indiv_patches = tf.reshape(patches, [batch_size * (patch_extr.num_patches ** 2), 
+                                             self.dim_x])
+        rho_x = kqm.pure2dm(indiv_patches)
+        rho_y = self.kqmu(rho_x)
+        y_w, y_v = kqm.dm2comp(rho_y)
+        norms_y = tf.expand_dims(tf.linalg.norm(y_v, axis=-1), axis=-1)
+        y_v = y_v / norms_y
+        probs = tf.einsum('...j,...ji->...i', y_w, y_v ** 2, optimize="optimal")
+        # Construct image from label proportions
+        conv2dt = tf.keras.layers.Conv2DTranspose(filters=1,
+                        kernel_size=self.patch_size,
+                        strides=self.pred_strides,
+                        kernel_initializer=tf.keras.initializers.Ones(),
+                        bias_initializer=tf.keras.initializers.Zeros(),
+                        trainable=False)
+        probs = tf.reshape(probs, [-1, patch_extr.num_patches, patch_extr.num_patches, self.number_of_classes])
+        ones = tf.ones_like(probs[..., 0:1])
+        outs = []
+        for i in range(self.number_of_classes):
+            out_i = conv2dt(probs[..., i:i + 1]) / conv2dt(ones)
+            outs.append(out_i)
+        out = tf.concat(outs, axis=3)
+        predict_model = tf.keras.models.Model([inputs], [out])
+        return train_model, predict_model
+
+    def get_name(self):
+        return f"KQM_classifier"
