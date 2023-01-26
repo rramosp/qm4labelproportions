@@ -20,7 +20,7 @@ def exp_summary(run_ids, outdir):
     res_df = None
     for run_id in run_ids:
         df = pd.read_csv(outdir + '/' + run_id + '.csv')
-        df1 = df.rename(columns={"rmseprops_on_chip":"rmse"})
+        df1 = df.rename(columns={"maeprops_on_chip":"mae"})
         df1 = df1.set_index('Unnamed: 0').stack().to_frame()
         df1.index = df1.index.map('|'.join)
         with open(outdir + '/' + run_id + '.params') as f:
@@ -32,7 +32,7 @@ def exp_summary(run_ids, outdir):
             res_df = df.T
         else:
             res_df = pd.concat([res_df, df.T])
-    return res_df.sort_values(by=['val|rmse'])
+    return res_df.sort_values(by=['val|mae'])
 
 def parameter_sweep(
                    data_generator_split_method,
