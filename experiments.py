@@ -1,4 +1,5 @@
 import psutil
+import os
 import numpy as np
 import pandas as pd
 from .lib import data
@@ -101,14 +102,13 @@ def run_experiment(data_generator_split_method,
                    init_args,
                    learning_rate=0.0001,
                    loss='multiclass_proportions_mse', 
-                   partitions_id =  'aschips',
                    epochs=10, 
                    class_weights=None,
                    wproject=None,
                    wentity=None,
                    n_batches_online_val = np.inf,
                    ):
-    print ("\n---------", partitions_id, "------------")
+    print ("\n---------", data_generator_split_args['partitions_id'], "------------")
     print ("using loss", loss) 
 
     pcs = model_class(**init_args)
@@ -128,6 +128,11 @@ def run_experiment(data_generator_split_method,
     pcs.fit(epochs=epochs)
     pcs.plot_val_sample(10); plt.show()
     r = pcs.summary_result()
+    csv_path = os.path.join(outdir, pcs.run_id + '.csv')
+    r.to_csv(csv_path)
+    params_path = os.path.join(outdir, pcs.run_id + ".params")
+    with open(params_path, 'w') as f:
+        f.write(repr(pcs.get_wandb_config()))
     pcs.empty_caches()
     print (r)
     return pcs
