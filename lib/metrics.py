@@ -273,12 +273,14 @@ class ProportionsMetrics:
 
         itemclass_iou = []
         itemclass_true_or_pred_ones = []
+        y_pred = tf.argmax(y_pred, axis=-1)
         # ignore class zero
-        for i,class_id in enumerate(self.class_ids[1:]):
+        for i in range(1, self.number_of_classes):
+            class_id = self.class_ids[i]
             y_true_ones  = tf.cast(y_true==class_id, tf.float32) 
-            y_pred_ones  = tf.cast(tf.argmax(y_pred, axis=-1)==i, tf.float32)
+            y_pred_ones  = tf.cast(y_pred==i, tf.float32)
             y_true_zeros = tf.cast(y_true!=class_id, tf.float32) 
-            y_pred_zeros = tf.cast(tf.argmax(y_pred, axis=-1)!=i, tf.float32)
+            y_pred_zeros = tf.cast(y_pred!=i, tf.float32)
 
             tp = tf.reduce_sum(y_true_ones  * y_pred_ones, axis=[1,2])
             fp = tf.reduce_sum(y_true_zeros * y_pred_ones, axis=[1,2])
@@ -292,7 +294,7 @@ class ProportionsMetrics:
 
             itemclass_iou.append(iou_this_class)
             itemclass_true_or_pred_ones.append(true_or_pred_ones)
-
+            
         itemclass_iou = tf.convert_to_tensor(itemclass_iou)
         itemclass_true_or_pred_ones = tf.convert_to_tensor(itemclass_true_or_pred_ones)
         # only compute the mean of the classes with pixels in y_true or y_pred
