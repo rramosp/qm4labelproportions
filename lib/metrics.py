@@ -200,7 +200,7 @@ class ProportionsMetrics:
 
         # compute mse using class weights
         r = tf.reduce_mean(
-                tf.reduce_sum(
+                tf.reduce_mean(
                     # ignore the first proportion corresponding to the background class
                     tf.sqrt((true_proportions[:,1:] - proportions_y_pred[:,1:])**2), 
                     axis=-1
