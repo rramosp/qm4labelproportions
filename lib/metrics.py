@@ -3,6 +3,118 @@ import numpy as np
 from rlxutils import subplots
 import matplotlib.pyplot as plt
 
+class ClassificationMetrics:
+    """
+    accumulates tp,tn,fp,fn per class and computes metrics on them
+    accepts batches of images
+    
+    y_true: [batch_size, sizex, sizey]                     class labels
+    y_pred: [batch_size, sizex, sizey, number_of_classes]  probabilities per class
+    
+    if sizex,sizey are different in y_true and y_pred the smaller is resized to the larger
+    
+    """
+    def __init__(self, number_of_classes, exclude_classes=[]):
+        self.number_of_classes = number_of_classes
+        self.classes = [i for i in range(self.number_of_classes) if not i in exclude_classes]
+        self.exclude_classes = exclude_classes
+        self.reset_state()
+        
+    def reset_state(self):
+        self.tp = {i:0 for i in self.classes}
+        self.tn = {i:0 for i in self.classes}
+        self.fp = {i:0 for i in self.classes}
+        self.fn = {i:0 for i in self.classes}
+        self.number_of_pixels = {i:0 for i in self.classes}
+        self.total_pixels = 0
+        
+    def update_state(self, y_true, y_pred):
+        # resize smallest
+        if y_true.shape[-1]<y_pred.shape[-1]:
+            y_true = tf.image.resize(y_true[..., tf.newaxis], y_pred.shape[1:], method='nearest')[:,:,:,0]
+
+        if y_pred.shape[-1]<y_true.shape[-1]:
+            y_pred = tf.image.resize(y_pred, y_true.shape[1:], method='nearest')
+        
+        # choose class with highest probability for prediction
+        y_pred = tf.argmax(y_pred, axis=-1)
+
+        self.total_pixels += tf.cast(tf.reduce_prod(y_true.shape), tf.float32)
+        for i in self.classes:
+            y_true_ones  = tf.cast(y_true==i, tf.float32)
+            y_true_zeros = tf.cast(y_true!=i, tf.float32)
+            y_pred_ones  = tf.cast(y_pred==i, tf.float32)
+            y_pred_zeros = tf.cast(y_pred!=i, tf.float32)
+            
+            self.tp[i] += tf.reduce_sum(y_true_ones  * y_pred_ones)
+            self.tn[i] += tf.reduce_sum(y_true_zeros * y_pred_zeros)
+            self.fp[i] += tf.reduce_sum(y_true_zeros * y_pred_ones)
+            self.fn[i] += tf.reduce_sum(y_true_ones  * y_pred_zeros)
+            self.number_of_pixels[i] += tf.reduce_sum(y_true_ones)
+            
+    def accuracy(self, tp, tn, fp, fn):
+        denominator = tp + tn + fp + fn
+        if denominator == 0:
+            return np.nan
+        else:
+            return (tp + tn)/denominator
+    
+    def f1(self, tp, tn, fp, fn):
+        denominator = tp + 0.5*(fp+fn)
+        if denominator == 0:
+            return np.nan
+        return tp / denominator
+    
+    def precision(self, tp, tn, fp, fn):
+        denominator = tp+fp
+        if denominator == 0:
+            return np.nan
+        return tp / denominator
+    
+    def result(self, metric_name, mode='micro'):
+        if not mode in ['per_class', 'micro', 'macro', 'weighted']:
+            raise ValueError(f"invalid mode '{mode}'")
+        
+        m = eval(f'self.{metric_name}')
+        
+        if mode=='per_class':
+            r = {i: m(self.tp[i], self.tn[i], self.fp[i], self.fn[i]) for i in self.classes}
+            return r
+        
+        if mode=='macro':
+            r = {i: m(self.tp[i], self.tn[i], self.fp[i], self.fn[i]) for i in self.classes}
+            r = [i for i in r.values() if not np.isnan(i)]
+            if len(r)==0:
+                return 0.
+            else:
+                return tf.reduce_mean(r)
+
+        if mode=='weighted':
+            total_pixels = tf.reduce_sum(list(self.number_of_pixels.values()))
+            if total_pixels == 0:
+                return 1.
+            r = []
+            for i in self.classes:
+                metric = m(self.tp[i], self.tn[i], self.fp[i], self.fn[i])
+                if not np.isnan(metric):
+                    r.append(metric*self.number_of_pixels[i] / total_pixels)
+
+            if len(r)==0:
+                return 0.
+            else:
+                return tf.reduce_sum(r)
+        
+        if mode=='micro':
+            tp = tf.reduce_sum(list(self.tp.values()))
+            tn = tf.reduce_sum(list(self.tn.values()))
+            fp = tf.reduce_sum(list(self.fp.values()))
+            fn = tf.reduce_sum(list(self.fn.values()))
+            r = m(tp, tn, fp, fn)
+            if np.isnan(r):
+                return 0
+            else:
+                return r
+
 class ProportionsMetrics:
     """
     class containing methods for label proportions metrics and losses
@@ -337,9 +449,8 @@ class ProportionsMetrics:
             hits.append(nb_pixels_correct)
             total_pixels.append(nb_pixels_in_class)
 
-        weighted_accuracy = tf.reduce_sum(hits) / tf.reduce_sum(total_pixels)
-        return weighted_accuracy
-
+        accuracy = tf.reduce_sum(hits) / tf.reduce_sum(total_pixels)
+        return accuracy
 
     def show_y_pred(self, y_pred):
         for n in range(len(y_pred)):
