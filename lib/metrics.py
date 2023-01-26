@@ -295,11 +295,14 @@ class ProportionsMetrics:
             itemclass_iou.append(iou_this_class)
             itemclass_true_or_pred_ones.append(true_or_pred_ones)
             
+
         itemclass_iou = tf.convert_to_tensor(itemclass_iou)
         itemclass_true_or_pred_ones = tf.convert_to_tensor(itemclass_true_or_pred_ones)
         # only compute the mean of the classes with pixels in y_true or y_pred
         per_item_iou = tf.reduce_sum(itemclass_iou, axis=0)/tf.reduce_sum(itemclass_true_or_pred_ones, axis=0)
-        return tf.reduce_mean(per_item_iou)    
+        per_item_iou = tf.where(tf.math.is_nan(per_item_iou), tf.ones_like(per_item_iou), per_item_iou)
+
+        return tf.reduce_mean(per_item_iou)   
 
     def compute_accuracy(self, y_true, y_pred):
         """
