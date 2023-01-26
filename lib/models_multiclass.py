@@ -314,7 +314,7 @@ class GenericUnet:
             
             # measure stuff on validation for reporting
             losses, accs, ious, maeps = [], [], [], []
-            max_value = np.min([len(self.val),self.n_batches_online_val ])
+            max_value = np.min([len(self.val),self.n_batches_online_val ]).astype(int)
             for i, (x, (p,l)) in pbar(enumerate(self.val), max_value=max_value):
                 if i>=self.n_batches_online_val:
                     break
