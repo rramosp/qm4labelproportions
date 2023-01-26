@@ -784,7 +784,7 @@ class QMPatchSegmentation(GenericUnet):
         norms_y = tf.expand_dims(tf.linalg.norm(y_v, axis=-1), axis=-1)
         y_v = y_v / norms_y
         probs = tf.einsum('...j,...ji->...i', y_w, y_v ** 2, optimize="optimal")
-        probs = probs[:, tf.newaxis, tf.newaxis, :]
+        # probs = probs[:, tf.newaxis, tf.newaxis, :]
         train_model =  tf.keras.models.Model([inputs], [probs])
 
         # Model for prediction
