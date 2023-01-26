@@ -11,6 +11,7 @@ import rasterio as rio
 from pyproj.crs import CRS
 import pathlib
 import geopandas as gpd
+from progressbar import progressbar as pbar
 
 lc = {'0': 'none', '1': 'water', '2': 'trees', '3': 'not used', '4': 'flooded vegetation', '5': 'crops'
 ,
@@ -116,11 +117,19 @@ class S2LandcoverDataGenerator(tf.keras.utils.Sequence):
     from https://stanford.edu/~shervine/blog/keras-how-to-generate-data-on-the-fly
     """
     @classmethod
-    def split(cls, basedir=None, train_size=0.7, test_size=0.2, val_size=0.1, cache_size=1000, max_chips=None, **kwargs):
+    def split(cls, basedir=None, 
+                   train_size=0.7, 
+                   test_size=0.2, 
+                   val_size=0.1, 
+                   cache_size=1000, 
+                   max_chips=None, 
+                   selected_classids = None,
+                   partitions_id = 'aschip',
+                   batch_size = 32,
+                   shuffle = True,
+                   ):
         assert basedir is not None, "must set 'basedir'"
         assert np.abs(train_size + test_size + val_size - 1) < 1e-7
-        assert not 'cache_size' in kwargs.keys()
-        assert not 'chips_basedirs' in kwargs.keys()
 
         np.random.seed(10)
         cs = Chipset(basedir)
@@ -143,14 +152,47 @@ class S2LandcoverDataGenerator(tf.keras.utils.Sequence):
         ts_cache_size = int(cache_size * test_size)
         val_cache_size = cache_size - tr_cache_size - ts_cache_size
 
-        tr = cls(basedir=basedir, chips_basedirs = tr, cache_size=tr_cache_size, **kwargs)
-        ts = cls(basedir=basedir, chips_basedirs = ts, cache_size=ts_cache_size, **kwargs)
-        val = cls(basedir=basedir, chips_basedirs = val, cache_size=val_cache_size, **kwargs)
+        # create dataloader for each split
+        tr = cls(basedir=basedir, 
+                 chips_basedirs=tr, 
+                 cache_size = tr_cache_size, 
+                 partitions_id = partitions_id, 
+                 selected_classids = selected_classids,
+                 batch_size = batch_size, 
+                 shuffle = shuffle,
+                 max_chips = max_chips
+                 )
+        ts = cls(basedir=basedir, 
+                 chips_basedirs=ts, 
+                 cache_size = ts_cache_size, 
+                 partitions_id = partitions_id, 
+                 selected_classids = selected_classids,
+                 batch_size = batch_size, 
+                 shuffle = shuffle,
+                 max_chips = max_chips
+                 )
+        val = cls(basedir=basedir, 
+                  chips_basedirs=val, 
+                  cache_size = val_cache_size, 
+                  partitions_id = partitions_id, 
+                  selected_classids = selected_classids,
+                  batch_size = batch_size, 
+                  shuffle = shuffle,
+                  max_chips = max_chips
+                  )
 
         return tr, ts, val
 
     @classmethod
-    def split_per_partition(cls, split_file=None, partitions_id=None, cache_size=1000, max_chips=None, **kwargs):
+    def split_per_partition(cls, 
+                            split_file = None, 
+                            partitions_id = None, 
+                            cache_size = 1000, 
+                            max_chips = None,
+                            selected_classids = None,
+                            batch_size = 32,
+                            shuffle = True,
+                            ):
         """
         creates three data loaders according to splits as defined in split_file
         """
@@ -178,6 +220,7 @@ class S2LandcoverDataGenerator(tf.keras.utils.Sequence):
         datadir = os.path.dirname(split_file)+"/data"
         files = os.listdir(datadir)
 
+        print (len(files))
         if max_chips is not None:
             files = np.random.permutation(files)[:max_chips]
 
@@ -198,9 +241,33 @@ class S2LandcoverDataGenerator(tf.keras.utils.Sequence):
         val_cache_size = cache_size - tr_cache_size - ts_cache_size
 
         # create dataloader for each split
-        tr = cls(basedir=datadir, chips_basedirs=split_files['train'], cache_size = tr_cache_size, partitions_id = partitions_id, **kwargs)
-        ts = cls(basedir=datadir, chips_basedirs=split_files['test'], cache_size = ts_cache_size, partitions_id = partitions_id, **kwargs)
-        val = cls(basedir=datadir, chips_basedirs=split_files['val'], cache_size = val_cache_size, partitions_id = partitions_id, **kwargs)
+        tr = cls(basedir=datadir, 
+                 chips_basedirs=split_files['train'], 
+                 cache_size = tr_cache_size, 
+                 partitions_id = partitions_id, 
+                 selected_classids = selected_classids,
+                 batch_size = batch_size, 
+                 shuffle = shuffle,
+                 max_chips = max_chips
+                 )
+        ts = cls(basedir=datadir, 
+                 chips_basedirs=split_files['test'], 
+                 cache_size = ts_cache_size, 
+                 partitions_id = partitions_id, 
+                 selected_classids = selected_classids,
+                 batch_size = batch_size, 
+                 shuffle = shuffle,
+                 max_chips = max_chips
+                 )
+        val = cls(basedir=datadir, 
+                  chips_basedirs=split_files['val'], 
+                  cache_size = val_cache_size, 
+                  partitions_id = partitions_id, 
+                  selected_classids = selected_classids,
+                  batch_size = batch_size, 
+                  shuffle = shuffle,
+                  max_chips = max_chips
+                  )
         
         return tr, ts, val        
             
@@ -210,7 +277,8 @@ class S2LandcoverDataGenerator(tf.keras.utils.Sequence):
                  shuffle=True,
                  cache_size=100,
                  chips_basedirs=None,
-                 max_chips = None
+                 max_chips = None,
+                 selected_classids = None
                  ):
         self.basedir = basedir
         if chips_basedirs is None:
@@ -225,14 +293,26 @@ class S2LandcoverDataGenerator(tf.keras.utils.Sequence):
         if max_chips is not None:
             self.chips_basedirs = self.chips_basedirs[:max_chips]
             
-            
+        self.number_of_original_classes = self.get_number_of_classes()
+        self.selected_classids = selected_classids
+        if self.selected_classids is not None:
+            self.selected_classids = sorted([i for i in self.selected_classids if i!=0])
+            self.number_of_output_classes = len(self.selected_classids)+1
+            for classid in self.selected_classids:
+                if classid>=self.number_of_original_classes:
+                    raise ValueError(f"class {classid} not valid. dataset contains {self.number_of_original_classes} classes")
+        else:
+            self.number_of_output_classes = self.number_of_original_classes
+
         self.batch_size = batch_size
         self.shuffle = shuffle
         self.partitions_id = partitions_id
         self.on_epoch_end()
         self.cache = {}
         self.cache_size = cache_size
-        self.number_of_classes = self.get_number_of_classes()
+ 
+    
+ 
         print (f"got {len(self.chips_basedirs):6d} chips on {len(self)} batches. cache size is {self.cache_size}")
 
     def get_number_of_classes(self):
@@ -280,10 +360,14 @@ class S2LandcoverDataGenerator(tf.keras.utils.Sequence):
 
             else:
                 raise ValueError(f"chip has no label partitions for {self.partitions_id}")
-            p = np.r_[[p[str(i)] if str(i) in p.keys() else 0 for i in range(self.number_of_classes)]]    
+            p = np.r_[[p[str(i)] if str(i) in p.keys() else 0 for i in range(self.number_of_original_classes)]]    
 
             # ensure 100x100 chips
-            r = [chip.chipmean[:100,:100,:], chip.label[:100,:100], p]
+            chipmean = chip.chipmean[:100,:100,:] 
+            labels   = chip.label[:100,:100]
+
+            # build output and cache it if there is space
+            r = [chipmean, labels, p]
             if len(self.cache) < self.cache_size:
                 self.cache[chip_filename] = r
             return r
@@ -293,19 +377,43 @@ class S2LandcoverDataGenerator(tf.keras.utils.Sequence):
         # X : (n_samples, *dim, n_channels)
         # Initialization
         X = np.empty((self.batch_size, 100, 100, 3), dtype=np.float32)
-        labels = np.empty((self.batch_size, 100, 100), dtype=np.int16)
-        partition_proportions = np.empty((self.batch_size, self.number_of_classes), dtype=np.float32)
+        labels = np.zeros((self.batch_size, 100, 100), dtype=np.int16)
+        partition_proportions = np.empty((self.batch_size, self.number_of_output_classes), dtype=np.float32)
 
         # Generate data
         for i, chip_id in enumerate(chips_basedirs_temp):
             # Store sample
             chip_mean, label, p = self.load_chip(chip_id)
             X[i,] = chip_mean/256
-            labels[i,] = label
-            partition_proportions[i,] = p
+
+            if self.selected_classids is None:
+                labels[i,] = label
+                partition_proportions[i,] = p
+            else:
+                # remap classes to selected ones, all non selected classes are mapped to 0 (background).
+
+                # first, remap label
+                labels[i,] = np.zeros_like(label)
+                for idx, classid in enumerate(self.selected_classids):
+                    labels[i,][label==classid] = idx+1
+                # remap proportions (aggregating non selected classes into background)
+                p_selected = p[self.selected_classids]
+                p_background = p[[i for i in range(self.number_of_original_classes) if not i in self.selected_classids]].sum()
+                partition_proportions[i,] = np.hstack([p_background, p_selected])                
 
         return X, (partition_proportions, labels)
 
+    def plot_onchip_class_distributions(self):
+        props = []
+        for x,(p,l) in pbar(self):
+            props.append(p.sum(axis=0))
+
+        props = np.r_[props].sum(axis=0)
+        props = props / sum(props)
+        pd.Series(props).plot(kind='bar')
+        plt.title("class distribution")
+        plt.xlabel("class number")
+        plt.grid();
 
 class S2_ESAWorldCover_DataGenerator(S2LandcoverDataGenerator):
 
