@@ -185,6 +185,13 @@ class GenericUnet:
             self.run_id = file_run_id
             run_file_path = os.path.join(self.outdir, self.run_id + ".h5")            
             self.train_model.load_weights(run_file_path)
+
+        self.classification_metrics = metrics.ClassificationMetrics(
+            number_of_classes=self.number_of_classes,
+            exclude_classes=[0] # class 0 is the background
+        )
+
+
         return self
 
     def init_model_params(self):
@@ -221,15 +228,16 @@ class GenericUnet:
         tval_out = np.argmax(val_out, axis=-1)
         cmap=matplotlib.colors.ListedColormap([plt.cm.tab20(i) for i in range(self.number_of_classes)])
 
-        accs = []
+        f1s = []
         ious = []
         maeprops_onchip = []
         for i in range(len(val_x)):
             maec = self.metrics.multiclass_proportions_mae_on_chip(val_l[i:i+1], val_out[i:i+1])
             maeprops_onchip.append(maec)
             if self.produces_pixel_predictions():
-                acc = self.metrics.compute_accuracy(val_l[i:i+1], val_out[i:i+1])
-                accs.append(acc)
+                self.classification_metrics.reset_state()
+                self.classification_metrics.update_state(val_l[i:i+1], val_out[i:i+1])
+                f1s.append(self.classification_metrics.result('f1', 'micro'))
                 iou = self.metrics.compute_iou(val_l[i:i+1], val_out[i:i+1])
                 ious.append(iou)
                 
@@ -246,7 +254,7 @@ class GenericUnet:
         for ax,i in subplots(len(val_out)):
             title = f"onchip: maeprop {maeprops_onchip[i]:.4f}"
             if self.produces_pixel_predictions():
-                title += f"\nacc {accs[i]:.3f}"
+                title += f"\nf1 {f1s[i]:.3f}"
                 title += f"  iou {ious[i]:.3f}"
                 plt.imshow(tval_out[i], vmin=0, vmax=self.number_of_classes, cmap=cmap, interpolation='none')
                 if i==len(val_out)-1:
@@ -313,8 +321,9 @@ class GenericUnet:
             log_dict['train/loss'] = tr_loss
             
             # measure stuff on validation for reporting
-            losses, accs, ious, maeps = [], [], [], []
-            max_value = np.min([len(self.val),self.n_batches_online_val ])
+            losses, ious, maeps = [], [], []
+            max_value = np.min([len(self.val),self.n_batches_online_val ]).astype(int)
+            self.classification_metrics.reset_state()
             for i, (x, (p,l)) in pbar(enumerate(self.val), max_value=max_value):
                 if i>=self.n_batches_online_val:
                     break
@@ -324,17 +333,18 @@ class GenericUnet:
                 losses.append(loss)
                 maeps.append(self.metrics.multiclass_proportions_mae_on_chip(l, out))
                 if self.produces_pixel_predictions():
-                    accs.append(self.metrics.compute_accuracy(l, out))
                     ious.append(self.metrics.compute_iou(l,out))
+
+                self.classification_metrics.update_state(l,out)
                     
             # summarize validation stuff
             val_loss = np.mean(losses)
             val_mean_mae = np.mean(maeps)
             txt_metrics = f"mae {val_mean_mae:.5f}"
             if self.produces_pixel_predictions():
-                val_mean_acc = np.mean(accs)
+                val_mean_f1 = np.mean(self.classification_metrics.result('f1', 'micro'))
                 val_mean_iou = np.mean(ious)
-                txt_metrics += f" acc {val_mean_acc:.5f} iou {val_mean_iou:.5f}"
+                txt_metrics += f" f1 {val_mean_f1:.5f} iou {val_mean_iou:.5f}"
                 
             # save model if better val loss
             if val_loss < min_val_loss:
@@ -345,7 +355,7 @@ class GenericUnet:
             if self.wandb_project is not None:
                 log_dict["val/loss"] = val_loss
                 if self.produces_pixel_predictions():
-                    log_dict["val/acc"] = val_mean_acc
+                    log_dict["val/f1"] = val_mean_f1
                     log_dict["val/iou"] = val_mean_iou
                 log_dict["val/maeprops_on_chip"] = val_mean_mae
                 wandb.log(log_dict)
@@ -364,26 +374,29 @@ class GenericUnet:
         else:
             dataset = self.ts
 
-        losses, accs, maeps, ious = [], [], [], []
+        losses, maeps, ious = [], [], []
+        mae_perclass, iou_perclass, f1_perclass = [], [], []
+        self.classification_metrics.reset_state()
         for x, (p,l) in pbar(dataset):
             x,l = self.normitem(x,l)
             out = self.predict(x)
-            loss = self.get_loss(out,p,l).numpy()
             if self.produces_pixel_predictions():
-                acc = self.metrics.compute_accuracy(l, out)
-                accs.append(acc)
                 iou = self.metrics.compute_iou(l, out)
                 ious.append(iou)
+                self.classification_metrics.update_state(l, out)
                 
-            maep =  self.metrics.multiclass_proportions_mae_on_chip(l, out).numpy()
-            losses.append(loss)
-            maeps.append(maep)
+            losses.append(self.get_loss(out,p,l).numpy())
+            maeps.append(self.metrics.multiclass_proportions_mae_on_chip(l, out).numpy())
+            mae_perclass.append(self.metrics.multiclass_proportions_mae_on_chip(l, out, perclass=True).numpy())
             
-        r = {'loss': np.mean(losses), 'maeprops_on_chip': np.mean(maeps)}
-        
+        r = {'loss': np.mean(losses), 'maeprops_on_chip::global': np.mean(maeps)}
+        r.update({f'maeprops_on_chip::class_{k}':v for k,v in zip(range(1, self.number_of_classes), np.r_[mae_perclass].mean(axis=0))})
+
         if self.produces_pixel_predictions(): 
-            r['accuracy'] = np.mean(accs)
-            r['iou'] = np.mean(ious)
+            r['f1::global']  = self.classification_metrics.result('f1', 'micro').numpy()
+            r['iou::global'] = np.mean(ious)
+            r.update({f'f1::class_{k}':v.numpy() for k,v in self.classification_metrics.result('f1', 'per_class').items()})
+            r.update({f'iou::class_{k}':v.numpy() for k,v in self.classification_metrics.result('iou', 'per_class').items()})
 
         return r
     
@@ -396,7 +409,10 @@ class GenericUnet:
         self.train_model.load_weights(run_file_path)
         r = [self.summary_dataset(i) for i in ['train', 'val', 'test']]
         r = pd.DataFrame(r, index = ['train', 'val', 'test'])
-        return r
+
+        r = r[['loss'] + sorted([c for c in r.columns if c!='loss'])]
+        r.columns = [" ".join(c.split("::")) for c in r.columns]        
+        return r.T
 
 
 class CustomUnetSegmentation(GenericUnet):
