@@ -5,6 +5,7 @@ import pandas as pd
 from .lib import data
 from sklearn.model_selection import ParameterSampler
 import matplotlib.pyplot as plt
+import wandb
 
 def exp_summary(run_ids, outdir):
     '''
@@ -135,4 +136,5 @@ def run_experiment(data_generator_split_method,
         f.write(repr(pcs.get_wandb_config()))
     pcs.empty_caches()
     print (r)
+    wandb.finish(quiet=True)
     return pcs

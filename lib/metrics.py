@@ -3,6 +3,125 @@ import numpy as np
 from rlxutils import subplots
 import matplotlib.pyplot as plt
 
+class ClassificationMetrics:
+    """
+    accumulates tp,tn,fp,fn per class and computes metrics on them
+    accepts batches of images
+    
+    y_true: [batch_size, sizex, sizey]                     class labels
+    y_pred: [batch_size, sizex, sizey, number_of_classes]  probabilities per class
+    
+    if sizex,sizey are different in y_true and y_pred the smaller is resized to the larger
+    
+    """
+    def __init__(self, number_of_classes, exclude_classes=[]):
+        self.number_of_classes = number_of_classes
+        self.classes = [i for i in range(self.number_of_classes) if not i in exclude_classes]
+        self.exclude_classes = exclude_classes
+        self.reset_state()
+        
+    def reset_state(self):
+        self.tp = {i:0 for i in self.classes}
+        self.tn = {i:0 for i in self.classes}
+        self.fp = {i:0 for i in self.classes}
+        self.fn = {i:0 for i in self.classes}
+        self.number_of_pixels = {i:0 for i in self.classes}
+        self.total_pixels = 0
+        
+    def update_state(self, y_true, y_pred):
+        # resize smallest
+        if y_true.shape[-1]<y_pred.shape[-1]:
+            y_true = tf.image.resize(y_true[..., tf.newaxis], y_pred.shape[1:], method='nearest')[:,:,:,0]
+
+        if y_pred.shape[-1]<y_true.shape[-1]:
+            y_pred = tf.image.resize(y_pred, y_true.shape[1:], method='nearest')
+        
+        # choose class with highest probability for prediction
+        y_pred = tf.argmax(y_pred, axis=-1)
+
+        self.total_pixels += tf.cast(tf.reduce_prod(y_true.shape), tf.float32)
+        for i in self.classes:
+            y_true_ones  = tf.cast(y_true==i, tf.float32)
+            y_true_zeros = tf.cast(y_true!=i, tf.float32)
+            y_pred_ones  = tf.cast(y_pred==i, tf.float32)
+            y_pred_zeros = tf.cast(y_pred!=i, tf.float32)
+            
+            self.tp[i] += tf.reduce_sum(y_true_ones  * y_pred_ones)
+            self.tn[i] += tf.reduce_sum(y_true_zeros * y_pred_zeros)
+            self.fp[i] += tf.reduce_sum(y_true_zeros * y_pred_ones)
+            self.fn[i] += tf.reduce_sum(y_true_ones  * y_pred_zeros)
+            self.number_of_pixels[i] += tf.reduce_sum(y_true_ones)
+            
+    def accuracy(self, tp, tn, fp, fn):
+        denominator = tp + tn + fp + fn
+        if denominator == 0:
+            return np.nan
+        else:
+            return (tp + tn)/denominator
+    
+    def f1(self, tp, tn, fp, fn):
+        denominator = tp + 0.5*(fp+fn)
+        if denominator == 0:
+            return np.nan
+        return tp / denominator
+    
+    def precision(self, tp, tn, fp, fn):
+        denominator = tp+fp
+        if denominator == 0:
+            return np.nan
+        return tp / denominator
+
+    def iou(self, tp, tn, fp, fn):
+        denominator = tp + fp + fn
+        if denominator == 0:
+            return np.nan
+        else:
+            return tp / denominator
+
+    def result(self, metric_name, mode='micro'):
+        if not mode in ['per_class', 'micro', 'macro', 'weighted']:
+            raise ValueError(f"invalid mode '{mode}'")
+        
+        m = eval(f'self.{metric_name}')
+        
+        if mode=='per_class':
+            r = {i: m(self.tp[i], self.tn[i], self.fp[i], self.fn[i]) for i in self.classes}
+            return r
+        
+        if mode=='macro':
+            r = {i: m(self.tp[i], self.tn[i], self.fp[i], self.fn[i]) for i in self.classes}
+            r = [i for i in r.values() if not np.isnan(i)]
+            if len(r)==0:
+                return 0.
+            else:
+                return tf.reduce_mean(r)
+
+        if mode=='weighted':
+            total_pixels = tf.reduce_sum(list(self.number_of_pixels.values()))
+            if total_pixels == 0:
+                return 1.
+            r = []
+            for i in self.classes:
+                metric = m(self.tp[i], self.tn[i], self.fp[i], self.fn[i])
+                if not np.isnan(metric):
+                    r.append(metric*self.number_of_pixels[i] / total_pixels)
+
+            if len(r)==0:
+                return 0.
+            else:
+                return tf.reduce_sum(r)
+        
+        if mode=='micro':
+            tp = tf.reduce_sum(list(self.tp.values()))
+            tn = tf.reduce_sum(list(self.tn.values()))
+            fp = tf.reduce_sum(list(self.fp.values()))
+            fn = tf.reduce_sum(list(self.fn.values()))
+            r = m(tp, tn, fp, fn)
+            if np.isnan(r):
+                return 0
+            else:
+                return r
+
 class ProportionsMetrics:
     """
     class containing methods for label proportions metrics and losses
@@ -122,7 +241,7 @@ class ProportionsMetrics:
                 probability predictions per pixel (such as the output of a softmax layer,so that class 
                 proportions will be computed from it), or with shape [batch_size, number_of_classes] 
                 directly with the class proportions (must add up to 1).
-        argmax: if truem compute proportions by selecting the class with highest assigned probability 
+        argmax: if true compute proportions by selecting the class with highest assigned probability 
                 in each pixel and then computing the proportions of selected classes across each image.
                 If False, the class proportions will be computed by averaging the probabilities in 
                 each class channel.
@@ -179,16 +298,17 @@ class ProportionsMetrics:
         )
         return r
         
-    def multiclass_proportions_mae(self, true_proportions, y_pred, argmax=False):
+    def multiclass_proportions_mae(self, true_proportions, y_pred, argmax=False, perclass=False):
         """
         computes the mae between proportions on probability predictions (y_pred)
         and target_proportions. NO CLASS WEIGHTS ARE USED and ignores class zero
         (corresponding to background)
 
-        y_pred:  see y_pred in get_y_pred_as_proportions
+        y_pred: see y_pred in get_y_pred_as_proportions
         argmax: see get_y_pred_as_proportions
+        perclass: if true returns a vector of length num_classes-1 with the mae on each class, except class 0
 
-        returns: a float with mse.
+        returns: a float with mse if perclass=False, otherwise a vector
         """
                         
         # select only the proportions of the specified classes (columns)
@@ -198,14 +318,17 @@ class ProportionsMetrics:
         # compute the proportions on prediction
         proportions_y_pred = self.get_y_pred_as_proportions(y_pred, argmax)
 
-        # compute mse using class weights
+        # compute mae per class
         r = tf.reduce_mean(
-                tf.reduce_mean(
-                    # ignore the first proportion corresponding to the background class
-                    tf.sqrt((true_proportions[:,1:] - proportions_y_pred[:,1:])**2), 
-                    axis=-1
-                )
+            # ignore the first proportion corresponding to the background class
+            tf.sqrt((true_proportions[:,1:] - proportions_y_pred[:,1:])**2),
+            axis=0
         )
+
+        # return mean if perclass is not required
+        if not perclass:
+            r = tf.reduce_mean(r)
+            
         return r
 
 
@@ -246,16 +369,18 @@ class ProportionsMetrics:
         )
         return loss
 
-    def multiclass_proportions_mae_on_chip(self, y_true, y_pred, argmax=False):
+    def multiclass_proportions_mae_on_chip(self, y_true, y_pred, argmax=False, perclass=False):
         """
         computes the mse between the proportions observed in a prediction wrt to a mask
         y_pred: a tf tensor of shape [batch_size, pixel_size, pixel_size, len(class_ids)] with probability predictions
         y_true: int array of shape [batch_size, pixel_size, pixel_size]
-        
+        perclass: see multiclass_proportions_mae
+        argmax: see multiclass_proportions_mae
+
         returns: a float with mse
         """
         p_true = self.get_class_proportions_on_masks(y_true, dense=False)
-        return self.multiclass_proportions_mae(p_true, y_pred, argmax=argmax)
+        return self.multiclass_proportions_mae(p_true, y_pred, argmax=argmax, perclass=perclass)
     
     def compute_iou(self, y_true, y_pred):
         """
@@ -295,11 +420,14 @@ class ProportionsMetrics:
             itemclass_iou.append(iou_this_class)
             itemclass_true_or_pred_ones.append(true_or_pred_ones)
             
+
         itemclass_iou = tf.convert_to_tensor(itemclass_iou)
         itemclass_true_or_pred_ones = tf.convert_to_tensor(itemclass_true_or_pred_ones)
         # only compute the mean of the classes with pixels in y_true or y_pred
         per_item_iou = tf.reduce_sum(itemclass_iou, axis=0)/tf.reduce_sum(itemclass_true_or_pred_ones, axis=0)
-        return tf.reduce_mean(per_item_iou)    
+        per_item_iou = tf.where(tf.math.is_nan(per_item_iou), tf.ones_like(per_item_iou), per_item_iou)
+
+        return tf.reduce_mean(per_item_iou)   
 
     def compute_accuracy(self, y_true, y_pred):
         """
@@ -334,9 +462,8 @@ class ProportionsMetrics:
             hits.append(nb_pixels_correct)
             total_pixels.append(nb_pixels_in_class)
 
-        weighted_accuracy = tf.reduce_sum(hits) / tf.reduce_sum(total_pixels)
-        return weighted_accuracy
-
+        accuracy = tf.reduce_sum(hits) / tf.reduce_sum(total_pixels)
+        return accuracy
 
     def show_y_pred(self, y_pred):
         for n in range(len(y_pred)):
