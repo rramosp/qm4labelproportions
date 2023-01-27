@@ -70,7 +70,14 @@ class ClassificationMetrics:
         if denominator == 0:
             return np.nan
         return tp / denominator
-    
+
+    def iou(self, tp, tn, fp, fn):
+        denominator = tp + fp + fn
+        if denominator == 0:
+            return np.nan
+        else:
+            return tp / denominator
+
     def result(self, metric_name, mode='micro'):
         if not mode in ['per_class', 'micro', 'macro', 'weighted']:
             raise ValueError(f"invalid mode '{mode}'")
@@ -234,7 +241,7 @@ class ProportionsMetrics:
                 probability predictions per pixel (such as the output of a softmax layer,so that class 
                 proportions will be computed from it), or with shape [batch_size, number_of_classes] 
                 directly with the class proportions (must add up to 1).
-        argmax: if truem compute proportions by selecting the class with highest assigned probability 
+        argmax: if true compute proportions by selecting the class with highest assigned probability 
                 in each pixel and then computing the proportions of selected classes across each image.
                 If False, the class proportions will be computed by averaging the probabilities in 
                 each class channel.
@@ -291,16 +298,17 @@ class ProportionsMetrics:
         )
         return r
         
-    def multiclass_proportions_mae(self, true_proportions, y_pred, argmax=False):
+    def multiclass_proportions_mae(self, true_proportions, y_pred, argmax=False, perclass=False):
         """
         computes the mae between proportions on probability predictions (y_pred)
         and target_proportions. NO CLASS WEIGHTS ARE USED and ignores class zero
         (corresponding to background)
 
-        y_pred:  see y_pred in get_y_pred_as_proportions
+        y_pred: see y_pred in get_y_pred_as_proportions
         argmax: see get_y_pred_as_proportions
+        perclass: if true returns a vector of length num_classes-1 with the mae on each class, except class 0
 
-        returns: a float with mse.
+        returns: a float with mse if perclass=False, otherwise a vector
         """
                         
         # select only the proportions of the specified classes (columns)
@@ -310,14 +318,17 @@ class ProportionsMetrics:
         # compute the proportions on prediction
         proportions_y_pred = self.get_y_pred_as_proportions(y_pred, argmax)
 
-        # compute mse using class weights
+        # compute mae per class
         r = tf.reduce_mean(
-                tf.reduce_mean(
-                    # ignore the first proportion corresponding to the background class
-                    tf.sqrt((true_proportions[:,1:] - proportions_y_pred[:,1:])**2), 
-                    axis=-1
-                )
+            # ignore the first proportion corresponding to the background class
+            tf.sqrt((true_proportions[:,1:] - proportions_y_pred[:,1:])**2),
+            axis=0
         )
+
+        # return mean if perclass is not required
+        if not perclass:
+            r = tf.reduce_mean(r)
+            
         return r
 
 
@@ -358,16 +369,18 @@ class ProportionsMetrics:
         )
         return loss
 
-    def multiclass_proportions_mae_on_chip(self, y_true, y_pred, argmax=False):
+    def multiclass_proportions_mae_on_chip(self, y_true, y_pred, argmax=False, perclass=False):
         """
         computes the mse between the proportions observed in a prediction wrt to a mask
         y_pred: a tf tensor of shape [batch_size, pixel_size, pixel_size, len(class_ids)] with probability predictions
         y_true: int array of shape [batch_size, pixel_size, pixel_size]
-        
+        perclass: see multiclass_proportions_mae
+        argmax: see multiclass_proportions_mae
+
         returns: a float with mse
         """
         p_true = self.get_class_proportions_on_masks(y_true, dense=False)
-        return self.multiclass_proportions_mae(p_true, y_pred, argmax=argmax)
+        return self.multiclass_proportions_mae(p_true, y_pred, argmax=argmax, perclass=perclass)
     
     def compute_iou(self, y_true, y_pred):
         """
