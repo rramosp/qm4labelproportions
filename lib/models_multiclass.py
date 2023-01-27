@@ -395,8 +395,8 @@ class GenericUnet:
         if self.produces_pixel_predictions(): 
             r['f1::global']  = self.classification_metrics.result('f1', 'micro').numpy()
             r['iou::global'] = np.mean(ious)
-            r.update({f'f1::class_{k}':v.numpy() for k,v in self.classification_metrics.result('f1', 'per_class').items()})
-            r.update({f'iou::class_{k}':v.numpy() for k,v in self.classification_metrics.result('iou', 'per_class').items()})
+            r.update({f'f1::class_{k}':tf.constant(v).numpy() for k,v in self.classification_metrics.result('f1', 'per_class').items()})
+            r.update({f'iou::class_{k}':tf.constant(v).numpy() for k,v in self.classification_metrics.result('iou', 'per_class').items()})
 
         return r
     
