@@ -135,6 +135,12 @@ def run_experiment(data_generator_split_method,
     with open(params_path, 'w') as f:
         f.write(repr(pcs.get_wandb_config()))
     pcs.empty_caches()
-    print (r)
+    
+    print ("--------")
+    print (r[[i=='loss' or 'global' in i for i in r.index]])
+    print ("--------")
+    print (r[[i!='loss' and 'global' not in i for i in r.index]])
+    print ("--------")
+
     wandb.finish(quiet=True)
     return pcs

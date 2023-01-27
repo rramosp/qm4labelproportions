@@ -280,7 +280,14 @@ class GenericUnet:
         return val_x, val_p, val_l, val_out
     
     def get_name(self):
+        r = self.__get_name__()
+        if 'tr' in dir(self):
+            r = self.tr.basedir.split("/")[-2][:4]+"_"+r
+        return r
+
+    def __get_name__(self):
         raise NotImplementedError()
+
 
     def get_models(self):
         raise NotImplementedError()
@@ -428,7 +435,7 @@ class CustomUnetSegmentation(GenericUnet):
         wconfig['input_shape'] = self.input_shape
         return wconfig
 
-    def get_name(self):
+    def __get_name__(self):
         return "custom_unet"
 
     def get_models(self):
@@ -515,7 +522,7 @@ class SMUnetSegmentation(GenericUnet):
         return m, m
 
 
-    def get_name(self):
+    def __get_name__(self):
         r = f"segmnt_{self.backbone}"
 
         if 'encoder_weights' in self.sm_keywords.keys() and self.sm_keywords['encoder_weights'] is not None:
@@ -588,7 +595,7 @@ class PatchProportionsRegression(GenericUnet):
         m = tf.keras.models.Model([inputs], [out])
         return m, m
 
-    def get_name(self):
+    def __get_name__(self):
         return f"patch_classifier"
 
 class PatchClassifierSegmentation(GenericUnet):
@@ -646,7 +653,7 @@ class PatchClassifierSegmentation(GenericUnet):
         #m = tf.keras.models.Model([inputs], [out])
         #return m
 
-    def get_name(self):
+    def __get_name__(self):
         return f"patch_classifier_segm"
 
 
@@ -667,7 +674,7 @@ class ConvolutionsRegression(GenericUnet):
                     'backbone_kwargs': self.backbone_kwargs})
         return w
 
-    def get_name(self):
+    def __get_name__(self):
         r = f"convregr_{self.backbone.__name__}"
 
         if 'weights' in self.backbone_kwargs.keys() and self.backbone_kwargs['weights'] is not None:
@@ -833,9 +840,9 @@ class QMPatchSegmentation(GenericUnet):
         predict_model = tf.keras.models.Model([inputs], [out])
         return train_model, predict_model
 
-    def get_name(self):
-        return f"KQM_classifier"
 
+    def __get_name__(self):
+        return f"KQM_classifier"
 
 def create_resize_encoder(input_shape, encoded_size=64, filter_size=[32, 64, 128]):
     encoder = Sequential([
@@ -863,7 +870,7 @@ class AEQMPatchSegmentation(QMPatchSegmentation):
         self.enc_weights_file = enc_weights_file
         self.kqmcx_file = kqmcx_file
 
-    def get_name(self):
+    def __get_name__(self):
         return f"AE_KQM_classifier"
 
     def get_trainable_variables(self):
