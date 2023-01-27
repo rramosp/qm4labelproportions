@@ -281,7 +281,7 @@ class GenericUnet:
     def get_name(self):
         r = self.__get_name__()
         if 'tr' in dir(self):
-            r = self.tr.basedir.split("/")[-1][:4]+r
+            r = self.tr.basedir.split("/")[-2][:4]+"_"+r
         return r
 
     def __get_name__(self):
