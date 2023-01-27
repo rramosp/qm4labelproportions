@@ -375,25 +375,28 @@ class GenericUnet:
             dataset = self.ts
 
         losses, maeps, ious = [], [], []
+        mae_perclass, iou_perclass, f1_perclass = [], [], []
         self.classification_metrics.reset_state()
         for x, (p,l) in pbar(dataset):
             x,l = self.normitem(x,l)
             out = self.predict(x)
-            loss = self.get_loss(out,p,l).numpy()
             if self.produces_pixel_predictions():
                 iou = self.metrics.compute_iou(l, out)
                 ious.append(iou)
                 self.classification_metrics.update_state(l, out)
                 
-            maep =  self.metrics.multiclass_proportions_mae_on_chip(l, out).numpy()
-            losses.append(loss)
-            maeps.append(maep)
+            losses.append(self.get_loss(out,p,l).numpy())
+            maeps.append(self.metrics.multiclass_proportions_mae_on_chip(l, out).numpy())
+            mae_perclass.append(self.metrics.multiclass_proportions_mae_on_chip(l, out, perclass=True).numpy())
             
-        r = {'loss': np.mean(losses), 'maeprops_on_chip': np.mean(maeps)}
-        
+        r = {'loss': np.mean(losses), 'maeprops_on_chip::global': np.mean(maeps)}
+        r.update({f'maeprops_on_chip::class_{k}':v for k,v in zip(range(1, self.number_of_classes), np.r_[mae_perclass].mean(axis=0))})
+
         if self.produces_pixel_predictions(): 
-            r['f1'] = self.classification_metrics.result('f1', 'micro')
-            r['iou'] = np.mean(ious)
+            r['f1::global']  = self.classification_metrics.result('f1', 'micro').numpy()
+            r['iou::global'] = np.mean(ious)
+            r.update({f'f1::class_{k}':v.numpy() for k,v in self.classification_metrics.result('f1', 'per_class').items()})
+            r.update({f'iou::class_{k}':v.numpy() for k,v in self.classification_metrics.result('iou', 'per_class').items()})
 
         return r
     
@@ -406,7 +409,10 @@ class GenericUnet:
         self.train_model.load_weights(run_file_path)
         r = [self.summary_dataset(i) for i in ['train', 'val', 'test']]
         r = pd.DataFrame(r, index = ['train', 'val', 'test'])
-        return r
+
+        r = r[['loss'] + sorted([c for c in r.columns if c!='loss'])]
+        r.columns = [" ".join(c.split("::")) for c in r.columns]        
+        return r.T
 
 
 class CustomUnetSegmentation(GenericUnet):
