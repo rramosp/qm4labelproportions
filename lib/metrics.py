@@ -301,12 +301,11 @@ class ProportionsMetrics:
     def multiclass_proportions_mae(self, true_proportions, y_pred, argmax=False, perclass=False):
         """
         computes the mae between proportions on probability predictions (y_pred)
-        and target_proportions. NO CLASS WEIGHTS ARE USED and ignores class zero
-        (corresponding to background)
+        and target_proportions. NO CLASS WEIGHTS ARE USED.
 
         y_pred: see y_pred in get_y_pred_as_proportions
         argmax: see get_y_pred_as_proportions
-        perclass: if true returns a vector of length num_classes-1 with the mae on each class, except class 0
+        perclass: if true returns a vector of length num_classes with the mae on each class
 
         returns: a float with mse if perclass=False, otherwise a vector
         """
@@ -320,8 +319,7 @@ class ProportionsMetrics:
 
         # compute mae per class
         r = tf.reduce_mean(
-            # ignore the first proportion corresponding to the background class
-            tf.sqrt((true_proportions[:,1:] - proportions_y_pred[:,1:])**2),
+            tf.sqrt((true_proportions - proportions_y_pred)**2),
             axis=0
         )
 
@@ -387,7 +385,7 @@ class ProportionsMetrics:
         computes iou using the formula tp / (tp + fp + fn) for each individual image.
         for each image, it computes the iou for each class and then averages only over
         the classes containing pixels in that image in y_true or y_pred.
-        NO CLASS WEIGHTS ARE USED and ignores class zero (corresponding to background).
+        NO CLASS WEIGHTS ARE USED.
         """
 
         if y_true.shape[1]<y_pred.shape[1]:
@@ -399,8 +397,7 @@ class ProportionsMetrics:
         itemclass_iou = []
         itemclass_true_or_pred_ones = []
         y_pred = tf.argmax(y_pred, axis=-1)
-        # ignore class zero
-        for i in range(1, self.number_of_classes):
+        for i in range(self.number_of_classes):
             class_id = self.class_ids[i]
             y_true_ones  = tf.cast(y_true==class_id, tf.float32) 
             y_pred_ones  = tf.cast(y_pred==i, tf.float32)

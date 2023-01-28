@@ -159,10 +159,10 @@ class GenericUnet:
 
         self.number_of_classes = self.tr.number_of_output_classes
 
-        # if there are no classweights, set class 0 weight to zero and the rest equal
+        # if there are no classweights, ditribute class weights evently across all classes
         if self.class_weights is None:
             n = self.number_of_classes
-            self.class_weights = {i: 0 if i==0 else 1/(n-1) for i in range(n)}
+            self.class_weights = {i: 1/n for i in range(n)}
 
         self.run_name = f"{self.get_name()}-{self.partitions_id}-{self.loss_name}-{datetime.now().strftime('%Y%m%d[%H%M]')}"
         self.train_model, self.val_model = self.get_models()
@@ -170,8 +170,6 @@ class GenericUnet:
 
         self.metrics = metrics.ProportionsMetrics(class_weights = self.class_weights)
 
-        # if there are no class weights, assume equal weight for all classes
-        # as defined in the dataloader
         if file_run_id is None:
             self.init_model_params()
             if wandb_project is not None:
@@ -188,8 +186,7 @@ class GenericUnet:
             self.train_model.load_weights(run_file_path)
 
         self.classification_metrics = metrics.ClassificationMetrics(
-            number_of_classes=self.number_of_classes,
-            exclude_classes=[0] # class 0 is the background
+            number_of_classes=self.number_of_classes
         )
 
 
@@ -398,7 +395,7 @@ class GenericUnet:
             mae_perclass.append(self.metrics.multiclass_proportions_mae_on_chip(l, out, perclass=True).numpy())
             
         r = {'loss': np.mean(losses), 'maeprops_on_chip::global': np.mean(maeps)}
-        r.update({f'maeprops_on_chip::class_{k}':v for k,v in zip(range(1, self.number_of_classes), np.r_[mae_perclass].mean(axis=0))})
+        r.update({f'maeprops_on_chip::class_{k}':v for k,v in zip(range(0, self.number_of_classes), np.r_[mae_perclass].mean(axis=0))})
 
         if self.produces_pixel_predictions(): 
             r['f1::global']  = self.classification_metrics.result('f1', 'micro').numpy()
