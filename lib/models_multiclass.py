@@ -187,8 +187,7 @@ class GenericUnet:
             self.train_model.load_weights(run_file_path)
 
         self.classification_metrics = metrics.ClassificationMetrics(
-            number_of_classes=self.number_of_classes,
-            exclude_classes=[0] # class 0 is the background
+            number_of_classes=self.number_of_classes
         )
 
 
