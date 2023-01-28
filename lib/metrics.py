@@ -305,7 +305,7 @@ class ProportionsMetrics:
 
         y_pred: see y_pred in get_y_pred_as_proportions
         argmax: see get_y_pred_as_proportions
-        perclass: if true returns a vector of length num_classes-1 with the mae on each class, except class 0
+        perclass: if true returns a vector of length num_classes with the mae on each class
 
         returns: a float with mse if perclass=False, otherwise a vector
         """
@@ -319,7 +319,6 @@ class ProportionsMetrics:
 
         # compute mae per class
         r = tf.reduce_mean(
-            # ignore the first proportion corresponding to the background class
             tf.sqrt((true_proportions - proportions_y_pred)**2),
             axis=0
         )
