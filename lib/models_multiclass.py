@@ -159,10 +159,10 @@ class GenericUnet:
 
         self.number_of_classes = self.tr.number_of_output_classes
 
-        # if there are no classweights, set class 0 weight to zero and the rest equal
+        # if there are no classweights, ditribute class weights evently across all classes
         if self.class_weights is None:
             n = self.number_of_classes
-            self.class_weights = {i: 0 if i==0 else 1/(n-1) for i in range(n)}
+            self.class_weights = {i: 1/n for i in range(n)}
 
         self.run_name = f"{self.get_name()}-{self.partitions_id}-{self.loss_name}-{datetime.now().strftime('%Y%m%d[%H%M]')}"
         self.train_model, self.val_model = self.get_models()
@@ -170,8 +170,6 @@ class GenericUnet:
 
         self.metrics = metrics.ProportionsMetrics(class_weights = self.class_weights)
 
-        # if there are no class weights, assume equal weight for all classes
-        # as defined in the dataloader
         if file_run_id is None:
             self.init_model_params()
             if wandb_project is not None:
