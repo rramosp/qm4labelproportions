@@ -266,8 +266,13 @@ class ProportionsMetrics:
                 # and then computing the proportions of selected classes across each image.
                 # cannot use tf.argmax since it is not differentiable. this workaround substracts the max value
                 # of each pixel from all classes and compares to zero, to substitute argmax
-                y_pred_argmax = y_pred - tf.cast(tf.math.equal(tf.reduce_max(y_pred, axis=-1, keepdims=True), 0), tf.float32)
+                # y_pred_argmax = tf.cast(tf.math.equal(y_pred - tf.reduce_max(y_pred, axis=-1, keepdims=True), 0), tf.float32)
+                # y_pred_argmax = tf.cast(tf.math.is_inf(1/(y_pred - tf.reduce_max(y_pred, axis=-1, keepdims=True))), tf.float32)
+                # r = tf.reduce_mean(y_pred_argmax, axis=[1,2])
+                y_pred_argmax = y_pred - tf.reduce_max(y_pred, axis=-1, keepdims=True)
+                y_pred_argmax = tf.sigmoid( (y_pred_argmax*1e4 + 1)*1e1)
                 r = tf.reduce_mean(y_pred_argmax, axis=[1,2])
+                
             else:
                 # compute the proportions by averaging each class. Softmax output guarantees all will add up to one.
                 r = tf.reduce_mean(y_pred, axis=[1,2])
