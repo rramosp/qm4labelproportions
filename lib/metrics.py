@@ -282,8 +282,6 @@ class ProportionsMetrics:
         returns: a float with mse.
         """
                         
-        # select only the proportions of the specified classes (columns)
-        # proportions_selected = tf.gather(true_proportions, self.class_ids, axis=1)
         assert len(true_proportions.shape)==2 and true_proportions.shape[-1]==self.number_of_classes
 
         # compute the proportions on prediction
@@ -310,8 +308,6 @@ class ProportionsMetrics:
         returns: a float with mse if perclass=False, otherwise a vector
         """
                         
-        # select only the proportions of the specified classes (columns)
-        # proportions_selected = tf.gather(true_proportions, self.class_ids, axis=1)
         assert len(true_proportions.shape)==2 and true_proportions.shape[-1]==self.number_of_classes
 
         # compute the proportions on prediction
@@ -343,12 +339,11 @@ class ProportionsMetrics:
         
         returns: a float with the loss.
         """
-        
+
         assert len(y_pred.shape)==4 and y_pred.shape[-1]==len(self.class_ids)
         assert len(true_proportions.shape)==2 and true_proportions.shape[-1]==self.number_of_classes
         
-        # select only the proportions of the specified classes (columns)
-        eta = tf.gather(true_proportions, self.class_ids, axis=1)
+        eta = true_proportions
 
         # compute the proportions on prediction (mu)
         mu = tf.reduce_mean(y_pred, axis=[1,2])
