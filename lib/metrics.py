@@ -60,7 +60,7 @@ class ClassificationMetrics:
             return (tp + tn)/denominator
     
     def f1(self, tp, tn, fp, fn):
-        denominator = tp + 0.5*(fp+fn)
+        denominator = tp + tf.cast(fp+fn, tf.float32).numpy() / 2
         if denominator == 0:
             return np.nan
         return tp / denominator
@@ -122,12 +122,21 @@ class ClassificationMetrics:
             else:
                 return r
 
+def pnorm(v,p):
+    """
+    the p-norm of a vector 
+
+    v: a batch of vectors of shape [num_vectors, vector_length]
+    p: the p of the norm, can be < 1
+    """
+    return tf.math.pow(tf.reduce_sum(tf.math.pow(np.r_[v], p), axis=-1), 1/p)
+
 class ProportionsMetrics:
     """
     class containing methods for label proportions metrics and losses
     """
 
-    def __init__(self, class_weights, proportions_argmax=False):
+    def __init__(self, class_weights, proportions_argmax=False, p_for_norm = 1, lambda_reg=0.0):
         """
         proportions_argmax: see get_y_pred_as_proportions
         """
@@ -135,6 +144,10 @@ class ProportionsMetrics:
         self.number_of_classes = len(self.class_weights)
         self.proportions_argmax = proportions_argmax
         self.get_sorted_class_weights()
+        self.p_for_norm = p_for_norm
+        self.lambda_reg = lambda_reg
+
+        self.max_pnorm = tf.cast(pnorm(np.ones(self.number_of_classes) / self.number_of_classes, self.p_for_norm), tf.float32)
         
     def get_sorted_class_weights(self):
         """
@@ -266,9 +279,6 @@ class ProportionsMetrics:
                 # and then computing the proportions of selected classes across each image.
                 # cannot use tf.argmax since it is not differentiable. this workaround substracts the max value
                 # of each pixel from all classes and compares to zero, to substitute argmax
-                # y_pred_argmax = tf.cast(tf.math.equal(y_pred - tf.reduce_max(y_pred, axis=-1, keepdims=True), 0), tf.float32)
-                # y_pred_argmax = tf.cast(tf.math.is_inf(1/(y_pred - tf.reduce_max(y_pred, axis=-1, keepdims=True))), tf.float32)
-                # r = tf.reduce_mean(y_pred_argmax, axis=[1,2])
                 y_pred_argmax = y_pred - tf.reduce_max(y_pred, axis=-1, keepdims=True)
                 y_pred_argmax = tf.sigmoid( (y_pred_argmax*1e4 + 1)*1e1)
                 r = tf.reduce_mean(y_pred_argmax, axis=[1,2])
@@ -299,6 +309,11 @@ class ProportionsMetrics:
         # compute the proportions on prediction
         proportions_y_pred = self.get_y_pred_as_proportions(y_pred, argmax)
 
+        # regularization promoting sparsity. divide by max_pnorm to ensure value in [0,1]
+        reg = tf.reduce_mean(
+                    self.lambda_reg * pnorm(proportions_y_pred, self.p_for_norm) / self.max_pnorm
+                )
+
         # compute mse using class weights
         r = tf.reduce_mean(
                 tf.reduce_sum(
@@ -306,7 +321,7 @@ class ProportionsMetrics:
                     axis=-1
                 )
         )
-        return r
+        return r + reg
         
     def multiclass_proportions_mae(self, true_proportions, y_pred, argmax=None, perclass=False):
         """
