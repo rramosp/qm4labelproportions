@@ -7,7 +7,7 @@ from sklearn.model_selection import ParameterSampler
 import matplotlib.pyplot as plt
 import wandb
 
-def exp_summary(run_ids, outdir):
+def exp_summary(run_ids, outdir, sort_by=[]):
     '''
     Generates a data frame from a list of run_ids. The information is grabed 
     from files in outdir
@@ -33,7 +33,7 @@ def exp_summary(run_ids, outdir):
             res_df = df.T
         else:
             res_df = pd.concat([res_df, df.T])
-    return res_df.sort_values(by=['val|mae'])
+    return res_df.sort_values(by=sort_by)
 
 def parameter_sweep(
                    data_generator_split_method,
