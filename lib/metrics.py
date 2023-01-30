@@ -263,11 +263,13 @@ class ProportionsMetrics:
             # if we have probability predictions per pixel (softmax output)
             if argmax:
                 # compute proportions by selecting the class with highest assigned probability in each pixel
-                # and then computing the proportions of selected classes across each image
-                y_pred_argmax = tf.argmax(y_pred, axis=-1)                
-                r = tf.convert_to_tensor([tf.reduce_sum(tf.cast(y_pred_argmax==class_id, tf.float32), axis=[1,2]) \
-                                          for class_id in self.class_ids]) / np.prod(y_pred_argmax.shape[-2:])
-                r = tf.transpose(r, [1,0])
+                # and then computing the proportions of selected classes across each image.
+                # cannot use tf.argmax since it is not differentiable. this workaround substracts the max value
+                # of each pixel from all classes and compares to zero, to substitute argmax
+                y_pred_argmax = tf.cast(y_pred - tf.reduce_max(y_pred, axis=-1, keepdims=True) == 0, tf.float32)
+                r = tf.reduce_mean(y_pred_argmax, axis=[1,2])
+
+
             else:
                 # compute the proportions by averaging each class. Softmax output guarantees all will add up to one.
                 r = tf.reduce_mean(y_pred, axis=[1,2])
