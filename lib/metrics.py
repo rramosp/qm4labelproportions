@@ -127,9 +127,13 @@ class ProportionsMetrics:
     class containing methods for label proportions metrics and losses
     """
 
-    def __init__(self, class_weights):
+    def __init__(self, class_weights, proportions_argmax=False):
+        """
+        proportions_argmax: see get_y_pred_as_proportions
+        """
         self.class_weights = class_weights
         self.number_of_classes = len(self.class_weights)
+        self.proportions_argmax = proportions_argmax
         self.get_sorted_class_weights()
         
     def get_sorted_class_weights(self):
@@ -235,7 +239,7 @@ class ProportionsMetrics:
         return r.astype(np.float32)
     
     
-    def get_y_pred_as_proportions(self, y_pred, argmax=False):
+    def get_y_pred_as_proportions(self, y_pred, argmax=None):
         """
         y_pred: a tf tensor of shape [batch_size, pixel_size, pixel_size, number_of_classes] with 
                 probability predictions per pixel (such as the output of a softmax layer,so that class 
@@ -244,12 +248,15 @@ class ProportionsMetrics:
         argmax: if true compute proportions by selecting the class with highest assigned probability 
                 in each pixel and then computing the proportions of selected classes across each image.
                 If False, the class proportions will be computed by averaging the probabilities in 
-                each class channel.
+                each class channel. If none, it will use self.proportions_argmax
         
         returns: a tf tensor of shape [batch_size, number_of_classes]
                  if input has shape [batch_size, number_of_classes], the input is returned untouched
         """
         assert (len(y_pred.shape)==4 or len(y_pred.shape)==2) and y_pred.shape[-1]==len(self.class_ids)
+
+        if argmax is None:
+            argmax = self.proportions_argmax
 
         # compute the proportions on prediction
         if len(y_pred.shape)==4:
@@ -271,7 +278,7 @@ class ProportionsMetrics:
         return r        
 
 
-    def multiclass_proportions_mse(self, true_proportions, y_pred, argmax=False):
+    def multiclass_proportions_mse(self, true_proportions, y_pred, argmax=None):
         """
         computes the mse between proportions on probability predictions (y_pred)
         and target_proportions, using the class_weights in this instance.
@@ -296,7 +303,7 @@ class ProportionsMetrics:
         )
         return r
         
-    def multiclass_proportions_mae(self, true_proportions, y_pred, argmax=False, perclass=False):
+    def multiclass_proportions_mae(self, true_proportions, y_pred, argmax=None, perclass=False):
         """
         computes the mae between proportions on probability predictions (y_pred)
         and target_proportions. NO CLASS WEIGHTS ARE USED.
@@ -362,7 +369,7 @@ class ProportionsMetrics:
         )
         return loss
 
-    def multiclass_proportions_mae_on_chip(self, y_true, y_pred, argmax=False, perclass=False):
+    def multiclass_proportions_mae_on_chip(self, y_true, y_pred, argmax=None, perclass=False):
         """
         computes the mse between the proportions observed in a prediction wrt to a mask
         y_pred: a tf tensor of shape [batch_size, pixel_size, pixel_size, len(class_ids)] with probability predictions

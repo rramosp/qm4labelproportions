@@ -118,7 +118,7 @@ class GenericUnet:
                         shuffle = True,
                         max_chips = None
                  ),
-
+                 metrics_args = {},
                  class_weights = None,
                  n_batches_online_val = np.inf,
                 ):
@@ -137,7 +137,7 @@ class GenericUnet:
         self.wandb_entity = wandb_entity
         self.class_weights = class_weights
         self.n_batches_online_val = n_batches_online_val 
-
+        self.metrics_args = metrics_args
         self.outdir = outdir
         if not os.path.exists(outdir):
             os.makedirs(outdir)
@@ -167,7 +167,7 @@ class GenericUnet:
         self.train_model, self.val_model = self.get_models()
         self.opt = tf.keras.optimizers.Adam(learning_rate = self.learning_rate)
 
-        self.metrics = metrics.ProportionsMetrics(class_weights = self.class_weights)
+        self.metrics = metrics.ProportionsMetrics(class_weights = self.class_weights, **self.metrics_args)
 
         if file_run_id is None:
             self.init_model_params()
@@ -187,7 +187,6 @@ class GenericUnet:
         self.classification_metrics = metrics.ClassificationMetrics(
             number_of_classes=self.number_of_classes
         )
-
 
         return self
 
@@ -289,9 +288,9 @@ class GenericUnet:
         raise NotImplementedError()
 
     def get_loss(self, out, p, l): 
-        if self.loss_name == 'multiclass_proportions_mse':
+        if self.loss_name in ['multiclass_proportions_mse', 'mse']:
             return self.metrics.multiclass_proportions_mse(p, out)
-        if self.loss_name == 'multiclass_LSRN_loss':
+        if self.loss_name in ['multiclass_LSRN_loss', 'lsrn']:
             return self.metrics.multiclass_LSRN_loss(p, out)
         raise ValueError(f"unkown loss '{self.loss_name}'")
 
@@ -379,7 +378,7 @@ class GenericUnet:
             dataset = self.ts
 
         losses, maeps, ious = [], [], []
-        mae_perclass, iou_perclass, f1_perclass = [], [], []
+        mae_perclass = []
         self.classification_metrics.reset_state()
         for x, (p,l) in pbar(dataset):
             x,l = self.normitem(x,l)
