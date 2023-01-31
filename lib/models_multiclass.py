@@ -219,60 +219,76 @@ class GenericUnet:
         self.val.on_epoch_end()
         return val_x, val_p, val_l, val_out
 
-    def plot_val_sample(self, n=10):
+    def plot_val_sample(self, n=10, return_fig = False):
+        
+        shuffle = self.val.shuffle
+        self.val.shuffle = False
         val_x, val_p, val_l, val_out = self.get_val_sample(n=n)
+        self.val.shuffle = shuffle
+        
+        n = len(val_x)
+        
         tval_out = np.argmax(val_out, axis=-1)
         cmap=matplotlib.colors.ListedColormap([plt.cm.tab20(i) for i in range(self.number_of_classes)])
 
-        f1s = []
-        ious = []
-        maeprops_onchip = []
-        for i in range(len(val_x)):
-            maec = self.metrics.multiclass_proportions_mae_on_chip(val_l[i:i+1], val_out[i:i+1])
-            maeprops_onchip.append(maec)
-            if self.produces_pixel_predictions():
+        n_rows = 4 if self.produces_pixel_predictions() else 3
+        for ax, ti in subplots(range(n*n_rows), n_cols=n, usizex=3.5):
+            i = ti % n
+            row = ti // n
+            
+            if row==0:
+                plt.imshow(val_x[i])        
+                if i==0: 
+                    plt.ylabel("input rgb")
+                    plt.title(f"{self.partitions_id}\n{self.loss_name}")
+
+            if row==1:
+                plt.imshow(val_l[i], vmin=0, vmax=self.number_of_classes, cmap=cmap, interpolation='none')
+                if i==0: 
+                    plt.ylabel("labels")
+                    
+                cbar = plt.colorbar(ax=ax, ticks=range(self.number_of_classes))
+                cbar.ax.set_yticklabels([f"{i}" for i in range(self.number_of_classes)])  # vertically oriented colorbar
+                    
+            if row==2 and self.produces_pixel_predictions():
                 self.classification_metrics.reset_state()
                 self.classification_metrics.update_state(val_l[i:i+1], val_out[i:i+1])
-                f1s.append(self.classification_metrics.result('f1', 'micro'))
+                f1 = self.classification_metrics.result('f1', 'micro')
                 iou = self.metrics.compute_iou(val_l[i:i+1], val_out[i:i+1])
-                ious.append(iou)
                 
-        for ax,i in subplots(len(val_x)):
-            plt.imshow(val_x[i])        
-            if i==0: 
-                plt.ylabel("input rgb")
-                plt.title(f"{self.partitions_id}\n{self.loss_name}")
-
-        for ax,i in subplots(len(val_l)):            
-            plt.imshow(val_l[i], vmin=0, vmax=self.number_of_classes, cmap=cmap, interpolation='none')
-            if i==0: plt.ylabel("labels")
-
-        for ax,i in subplots(len(val_out)):
-            title = f"onchip: maeprop {maeprops_onchip[i]:.4f}"
-            if self.produces_pixel_predictions():
-                title += f"\nf1 {f1s[i]:.3f}"
-                title += f"  iou {ious[i]:.3f}"
+                title = f"onchip f1 {f1:.3f} iou {iou:.3f}"
                 plt.imshow(tval_out[i], vmin=0, vmax=self.number_of_classes, cmap=cmap, interpolation='none')
-                if i==len(val_out)-1:
-                    cbar = plt.colorbar(ax=ax, ticks=range(self.number_of_classes))
-                    cbar.ax.set_yticklabels([f"{i}" for i in range(self.number_of_classes)])  # vertically oriented colorbar
-            plt.title(title)
-            if i==0: plt.ylabel("thresholded output")
+                cbar = plt.colorbar(ax=ax, ticks=range(self.number_of_classes))
+                cbar.ax.set_yticklabels([f"{i}" for i in range(self.number_of_classes)])  # vertically oriented colorbar
+                plt.title(title)
+                if i==0: 
+                    plt.ylabel("thresholded output")
+                
+            if (row==2 and not self.produces_pixel_predictions()) or row==3:
+                nc = self.number_of_classes
+                y_pred_proportions = self.metrics.get_y_pred_as_proportions(val_out[i:i+1], argmax=True)[0]
+                onchip_proportions = self.metrics.get_class_proportions_on_masks(val_l[i:i+1])[0]
 
-        n = self.number_of_classes
-        y_pred_proportions = self.metrics.get_y_pred_as_proportions(val_out, argmax=True)
-        onchip_proportions = self.metrics.get_class_proportions_on_masks(val_l)
-        for ax, i in subplots(len(val_x)):
-            plt.bar(np.arange(n)-.2, val_p[i], 0.2, label="on partition", alpha=.5)
-            plt.bar(np.arange(n), onchip_proportions[i], 0.2, label="on chip", alpha=.5)
-            plt.bar(np.arange(n)+.2, y_pred_proportions[i], 0.2, label="pred", alpha=.5)
-            if i==len(val_x)-1:
-                plt.legend()
-            plt.grid();
-            plt.xticks(np.arange(n), np.arange(n));
-            plt.title("proportions per class")            
+                maec = self.metrics.multiclass_proportions_mae_on_chip(val_l[i:i+1], val_out[i:i+1])
 
-        return val_x, val_p, val_l, val_out
+                plt.bar(np.arange(nc)-.2, val_p[i], 0.2, label="on partition", alpha=.5)
+                plt.bar(np.arange(nc), onchip_proportions, 0.2, label="on chip", alpha=.5)
+                plt.bar(np.arange(nc)+.2, y_pred_proportions, 0.2, label="pred", alpha=.5)
+                if i in [0, n//2, n-1]:
+                    plt.legend()
+                plt.grid();
+                plt.xticks(np.arange(nc), np.arange(nc));
+                plt.title(f"maeprops {maec:.3f}")            
+                plt.xlabel("class number")
+                plt.ylim(0,1)
+                plt.ylabel("proportions")
+                
+        if return_fig:
+            fig = plt.gcf()
+            plt.close(fig)
+            return fig
+        else:
+            return val_x, val_p, val_l, val_out
     
     def get_name(self):
         r = self.__get_name__()
@@ -361,6 +377,7 @@ class GenericUnet:
                     log_dict["val/f1"] = val_mean_f1
                     log_dict["val/iou"] = val_mean_iou
                 log_dict["val/maeprops_on_chip"] = val_mean_mae
+                log_dict['val/sample'] = self.plot_val_sample(16, return_fig=True)
                 wandb.log(log_dict)
 
             # log to screen
