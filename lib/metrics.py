@@ -382,8 +382,8 @@ class ProportionsMetrics:
         # compute loss
         loss = tf.reduce_mean(
                 tf.reduce_sum(
-                    0.5 * (eta - mu)**2 / (sigma_2) +
-                    0.5 * sigma_2, 
+                    0.2 * (eta - mu)**2 / (sigma_2) +
+                    0.8 * sigma_2, 
                     #0.5 * tf.math.log(2 * np.pi * sigma_2), 
                     axis=-1
                 )
