@@ -121,6 +121,7 @@ class GenericUnet:
                  metrics_args = {},
                  class_weights = None,
                  n_batches_online_val = np.inf,
+                 n_val_samples = 10
                 ):
 
         print (f"initializing {self.get_name()}")
@@ -139,6 +140,7 @@ class GenericUnet:
         self.n_batches_online_val = n_batches_online_val 
         self.metrics_args = metrics_args
         self.outdir = outdir
+        self.n_val_samples = n_val_samples
         if not os.path.exists(outdir):
             os.makedirs(outdir)
 
@@ -340,7 +342,7 @@ class GenericUnet:
             log_dict['train/loss'] = tr_loss
             
             # measure stuff on validation for reporting
-            losses, ious, maeps = [], [], []
+            losses, ious, maeps, maeps_perclass = [], [], [], []
             max_value = np.min([len(self.val),self.n_batches_online_val ]).astype(int)
             self.classification_metrics.reset_state()
             for i, (x, (p,l)) in pbar(enumerate(self.val), max_value=max_value):
@@ -351,6 +353,7 @@ class GenericUnet:
                 loss = self.get_loss(out,p,l).numpy()
                 losses.append(loss)
                 maeps.append(self.metrics.multiclass_proportions_mae_on_chip(l, out))
+                maeps_perclass.append(self.metrics.multiclass_proportions_mae_on_chip(l, out, perclass=True).numpy())
                 if self.produces_pixel_predictions():
                     ious.append(self.metrics.compute_iou(l,out))
 
@@ -370,6 +373,19 @@ class GenericUnet:
                 min_val_loss = val_loss
                 self.train_model.save_weights(run_file_path)
                 
+            # assemble per class metrics
+            r = {'loss': np.mean(losses), 'maeprops_on_chip::global': np.mean(maeps)}
+            r.update({f'maeprops_on_chip::class_{k}':v for k,v in zip(range(0, self.number_of_classes), np.r_[maeps_perclass].mean(axis=0))})
+
+            if self.produces_pixel_predictions(): 
+                r['f1::global']  = self.classification_metrics.result('f1', 'micro').numpy()
+                r['iou::global'] = np.mean(ious)
+                r.update({f'f1::class_{k}':tf.constant(v).numpy() for k,v in self.classification_metrics.result('f1', 'per_class').items()})
+                r.update({f'iou::class_{k}':tf.constant(v).numpy() for k,v in self.classification_metrics.result('iou', 'per_class').items()})
+
+            df_perclass = pd.DataFrame([{k:v for k,v in r.items() if 'global' not in k and k!='loss'}], index=["val"]).T
+
+
             # log to wandb
             if self.wandb_project is not None:
                 log_dict["val/loss"] = val_loss
@@ -377,7 +393,8 @@ class GenericUnet:
                     log_dict["val/f1"] = val_mean_f1
                     log_dict["val/iou"] = val_mean_iou
                 log_dict["val/maeprops_on_chip"] = val_mean_mae
-                log_dict['val/sample'] = self.plot_val_sample(16, return_fig=True)
+                log_dict['val/sample'] = self.plot_val_sample(self.n_val_samples, return_fig=True)
+                log_dict['val/perclass'] = wandb.Html(df_perclass.to_html())
                 wandb.log(log_dict)
 
             # log to screen
