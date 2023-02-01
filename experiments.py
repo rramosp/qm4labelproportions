@@ -48,7 +48,11 @@ def parameter_sweep(
                    class_weights=None,
                    wproject=None,
                    wentity=None,
-                   n_batches_online_val = np.inf):
+                   n_batches_online_val = np.inf,
+                   log_imgs=False,
+                   log_perclass=False,
+                   metrics_args={},
+                   wandb_tags=[]):
     '''
     parameter_sweep works similar as run_experiment but the hyperparameters
     are lists or distributions instead of individual values.
@@ -89,7 +93,11 @@ def parameter_sweep(
                    class_weights=class_weights,
                    wproject=wproject,
                    wentity=wentity,
-                   n_batches_online_val=n_batches_online_val
+                   n_batches_online_val=n_batches_online_val,
+                   log_imgs=log_imgs,
+                   log_perclass=log_perclass,
+                   metrics_args=metrics_args,
+                   wandb_tags=wandb_tags
                   )
         if hasattr(clf, 'run_id'):
             run_ids.append(clf.run_id)
@@ -108,10 +116,10 @@ def run_experiment(data_generator_split_method,
                    wproject=None,
                    wentity=None,
                    n_batches_online_val = np.inf,
-                   log_imgs = False,
-                   log_perclass = False,
-                   metrics_args = {},
-                   wandb_tags = []
+                   log_imgs=False,
+                   log_perclass=False,
+                   metrics_args={},
+                   wandb_tags=[]
                    ):
     print ("\n---------", data_generator_split_args['partitions_id'], "------------")
     print ("using loss", loss) 
