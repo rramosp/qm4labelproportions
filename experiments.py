@@ -108,6 +108,10 @@ def run_experiment(data_generator_split_method,
                    wproject=None,
                    wentity=None,
                    n_batches_online_val = np.inf,
+                   log_imgs = False,
+                   log_perclass = False,
+                   metrics_args = {},
+                   wandb_tags = []
                    ):
     print ("\n---------", data_generator_split_args['partitions_id'], "------------")
     print ("using loss", loss) 
@@ -124,7 +128,11 @@ def run_experiment(data_generator_split_method,
                  wandb_entity = wentity,
                  class_weights = class_weights,
                  n_batches_online_val=n_batches_online_val,
+                 log_perclass = log_perclass,
+                 log_imgs = log_imgs,
+                 metrics_args = metrics_args
                  )
+    wandb.run.tags = wandb.run.tags +   tuple(wandb_tags)             
     print ("-----", psutil.virtual_memory())
     pcs.fit(epochs=epochs)
     pcs.plot_val_sample(10); plt.show()

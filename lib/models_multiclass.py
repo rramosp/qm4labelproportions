@@ -121,7 +121,9 @@ class GenericUnet:
                  metrics_args = {},
                  class_weights = None,
                  n_batches_online_val = np.inf,
-                 n_val_samples = 10
+                 n_val_samples = 10,
+                 log_imgs = False,
+                 log_perclass = False
                 ):
 
         print (f"initializing {self.get_name()}")
@@ -129,6 +131,8 @@ class GenericUnet:
         assert 'partitions_id' in data_generator_split_args.keys(), \
                "'data_generator_split_args' must have 'partitions_id'"
 
+        self.log_imgs = log_imgs
+        self.log_perclass = log_perclass
         self.partitions_id = data_generator_split_args['partitions_id']
         self.learning_rate = learning_rate
         self.loss_name = loss
@@ -393,8 +397,10 @@ class GenericUnet:
                     log_dict["val/f1"] = val_mean_f1
                     log_dict["val/iou"] = val_mean_iou
                 log_dict["val/maeprops_on_chip"] = val_mean_mae
-                log_dict['val/sample'] = self.plot_val_sample(self.n_val_samples, return_fig=True)
-                log_dict['val/perclass'] = wandb.Html(df_perclass.to_html())
+                if self.log_imgs:
+                    log_dict['val/sample'] = self.plot_val_sample(self.n_val_samples, return_fig=True)
+                if self.log_perclass:
+                    log_dict['val/perclass'] = wandb.Html(df_perclass.to_html())
                 wandb.log(log_dict)
 
             # log to screen
