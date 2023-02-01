@@ -7,7 +7,7 @@ from sklearn.model_selection import ParameterSampler
 import matplotlib.pyplot as plt
 import wandb
 
-def exp_summary(run_ids, outdir):
+def exp_summary(run_ids, outdir, sort_by=[]):
     '''
     Generates a data frame from a list of run_ids. The information is grabed 
     from files in outdir
@@ -33,7 +33,7 @@ def exp_summary(run_ids, outdir):
             res_df = df.T
         else:
             res_df = pd.concat([res_df, df.T])
-    return res_df.sort_values(by=['val|mae'])
+    return res_df.sort_values(by=sort_by)
 
 def parameter_sweep(
                    data_generator_split_method,
@@ -132,13 +132,22 @@ def run_experiment(data_generator_split_method,
                  log_imgs = log_imgs,
                  metrics_args = metrics_args
                  )
-    wandb.run.tags = wandb.run.tags +   tuple(wandb_tags)             
+    if wproject is not None:
+        wandb.run.tags = wandb.run.tags + tuple(wandb_tags)             
     print ("-----", psutil.virtual_memory())
     pcs.fit(epochs=epochs)
     pcs.plot_val_sample(10); plt.show()
     r = pcs.summary_result()
     csv_path = os.path.join(outdir, pcs.run_id + '.csv')
     r.to_csv(csv_path)
+    if wproject is not None:
+        config = {}
+        for part in ['train', 'val', 'test']:
+            config[f"mae::{part}"] = r[part]['maeprops_on_chip global']
+            if pcs.produces_pixel_predictions():
+                config[f"f1::{part}"] = r[part]['f1 global']
+                config[f"iou::{part}"] = r[part]['iou global']
+        wandb.config.update(config)
     params_path = os.path.join(outdir, pcs.run_id + ".params")
     with open(params_path, 'w') as f:
         f.write(repr(pcs.get_wandb_config()))
