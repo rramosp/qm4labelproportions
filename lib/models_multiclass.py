@@ -157,8 +157,8 @@ class GenericUnet:
         self.class_weights_values = list(self.class_weights.values())
         
         # if no zero in class weights set its weight to zero
-        if not 0 in self.class_weights.keys():
-            self.class_weights = [0] + self.class_weights    
+        if not 0 in self.class_weights_values:
+            self.class_weights_values = [0] + self.class_weights_values    
 
         self.run_name = f"{self.get_name()}-{self.partitions_id}-{self.loss_name}-{datetime.now().strftime('%Y%m%d[%H%M]')}"
         self.train_model, self.val_model = self.get_models()
