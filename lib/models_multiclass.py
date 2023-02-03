@@ -29,16 +29,6 @@ def get_next_file_path(path, base_name, ext):
             return file_path
         i += 1
 
-def get_sorted_class_weights(class_weights):
-    # normalize weights to sum up to 1
-    class_weights = {k:v/sum(class_weights.values()) for k,v in class_weights.items()}
-
-    # make sure class ids are ordered
-    class_ids = np.sort(list(class_weights.keys()))
-    class_w   = np.r_[[class_weights[i] for i in class_ids]]       
-
-    return class_ids, class_w
-
 class GenericUnet:
 
     def __init__(self, *args, **kwargs):
@@ -149,32 +139,32 @@ class GenericUnet:
         if not os.path.exists(outdir):
             os.makedirs(outdir)
 
-        if class_weights is None:
-            selected_classids = None
+        if self.class_weights is None:
+            data_generator_split_args['class_groups'] = None
         else:
-            # if class weights was specified, it could have a selection of classes
-            # which will be mapped to 0..number_of_selected_classes
-            if not 0 in class_weights.keys():
-                class_weights[0] = 0
-            selected_classids = sorted(class_weights.keys())
-            self.original_class_weights = class_weights
-            self.class_weights = {i:class_weights[k] for i,k in enumerate(selected_classids)}
+            self.class_weights = {k:v/sum(self.class_weights.values()) for k,v in self.class_weights.items()}
+            data_generator_split_args['class_groups'] = [i for i in self.class_weights.keys() if i!=0]
 
-        data_generator_split_args['selected_classids'] = selected_classids
         self.tr, self.ts, self.val = data_generator_split_method(**data_generator_split_args)
 
         self.number_of_classes = self.tr.number_of_output_classes
 
-        # if there are no classweights, ditribute class weights evently across all classes
+        # if there are no classweights, distribute class weights evently across all classes
         if self.class_weights is None:
             n = self.number_of_classes
             self.class_weights = {i: 1/n for i in range(n)}
+
+        self.class_weights_values = list(self.class_weights.values())
+        
+        # if no zero in class weights set its weight to zero
+        if not 0 in self.class_weights.keys():
+            self.class_weights = [0] + self.class_weights    
 
         self.run_name = f"{self.get_name()}-{self.partitions_id}-{self.loss_name}-{datetime.now().strftime('%Y%m%d[%H%M]')}"
         self.train_model, self.val_model = self.get_models()
         self.opt = tf.keras.optimizers.Adam(learning_rate = self.learning_rate)
 
-        self.metrics = metrics.ProportionsMetrics(class_weights = self.class_weights, **self.metrics_args)
+        self.metrics = metrics.ProportionsMetrics(class_weights_values = self.class_weights_values, **self.metrics_args)
 
         if file_run_id is None:
             self.init_model_params()
@@ -236,7 +226,8 @@ class GenericUnet:
         n = len(val_x)
         
         tval_out = np.argmax(val_out, axis=-1)
-        cmap=matplotlib.colors.ListedColormap([plt.cm.tab20(i) for i in range(self.number_of_classes)])
+        cmap=matplotlib.colors.ListedColormap([plt.cm.gist_ncar(i/self.number_of_classes) \
+                                                for i in range(self.number_of_classes)])
 
         n_rows = 4 if self.produces_pixel_predictions() else 3
         for ax, ti in subplots(range(n*n_rows), n_cols=n, usizex=3.5):
@@ -401,7 +392,9 @@ class GenericUnet:
                 if self.log_imgs:
                     log_dict['val/sample'] = self.plot_val_sample(self.n_val_samples, return_fig=True)
                 if self.log_perclass:
-                    log_dict['val/perclass'] = wandb.Html(df_perclass.to_html())
+                    log_dict['val/perclass'] = \
+                        wandb.Table(columns = ['metric', 'val'], 
+                                    data=[[i,j[0]] for i,j in zip (df_perclass.index, df_perclass.values)])                    
                 wandb.log(log_dict)
 
             # log to screen

@@ -515,7 +515,7 @@ class Partition:
         basedir = self.partitionset_dir + "/" + image_collection_name
         filename = f"{basedir}/{self.identifier}.tif"
         img = imread(filename)
-        r = {transform_label_fn(k):v for k,v in zip(*np.unique(img, return_counts=True)) if k!=0}        
+        r = {transform_label_fn(k):v for k,v in zip(*np.unique(img, return_counts=True))}        
         total = sum(r.values())
         r = {k:v/total for k,v in r.items()}
         return r
@@ -531,7 +531,10 @@ class Partition:
         """
         t = other_partitionset
         relevant = t.data[[i.intersects(self.geometry) for i in t.data.geometry.values]]
-        w = np.r_[[self.geometry.intersection(i).area/self.geometry.area for i in relevant.geometry]]
+
+        # weight each higher grained geometry by % of intersection with this geometry
+        w = np.r_[[self.geometry.intersection(i).area for i in relevant.geometry]]
+        w = w / w.sum()
         cross_proportions = dict ((pd.DataFrame(list(relevant[f"{image_collection_name}_proportions"].values)) * w.reshape(-1,1) ).sum(axis=0))
 
         if len(w)>0:
