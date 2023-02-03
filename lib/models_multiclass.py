@@ -44,7 +44,7 @@ class GenericUnet:
             "batch_size":self.tr.batch_size,
             'trainable_params':self.trainable_params,
             'non_trainable_params':self.non_trainable_params,
-            'class_weights':self.class_weights,
+            'class_weights':{str(k):v for k,v in self.class_weights.items()},
             'loss': self.loss_name,
             'partitions_id':self.partitions_id
         }
