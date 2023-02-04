@@ -19,8 +19,6 @@ import seaborn as sns
 import pandas as pd
 import gc
 import os
-from skimage.io import imread
-
 
 
 def get_next_file_path(path, base_name, ext):
@@ -401,18 +399,7 @@ class GenericUnet:
                         wandb.Table(columns = ['metric', 'val'], 
                                     data=[[i,j[0]] for i,j in zip (df_perclass.index, df_perclass.values)])    
                 if self.log_confusion_matrix:
-                    cm = self.classification_metrics.cm
-                    tmpfname = f"/tmp/{np.random.randint(1000000)}.png"
-                    fig, ax = plt.subplots(figsize=(5+self.number_of_classes/5,5+self.number_of_classes/5))
-                    sns.heatmap(cm/np.sum(cm), fmt='.1%', annot=True, 
-                                cmap='Blues', cbar=False, ax=ax,
-                                annot_kws={"size": 8})
-                    plt.xlabel("y_pred")
-                    plt.ylabel("y_true")
-                    plt.savefig(tmpfname)
-                    plt.close(fig)       
-                    img = imread(tmpfname)
-                    os.remove(tmpfname)
+                    img = metrics.plot_confusion_matrix(self.classification_metrics.cm)
                     log_dict['val/confusion_matrix'] = wandb.Image(img, caption="confusion matrix")
          
                 wandb.log(log_dict)

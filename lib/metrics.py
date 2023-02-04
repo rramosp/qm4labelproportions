@@ -2,6 +2,9 @@ import tensorflow as tf
 import numpy as np
 from rlxutils import subplots
 import matplotlib.pyplot as plt
+from skimage.io import imread
+import seaborn as sns
+import os
 
 class ClassificationMetrics:
     """
@@ -140,6 +143,68 @@ def pnorm(v,p):
     p: the p of the norm, can be < 1
     """
     return tf.math.pow(tf.reduce_sum(tf.math.pow(np.r_[v], p), axis=-1), 1/p)
+
+
+def plot_confusion_matrix(cm):
+
+    nc = cm.shape[0]
+
+    fig = plt.figure(figsize=(6+nc/5, 6+nc/5))
+    # Add a gridspec with two rows and two columns and a ratio of 1 to 4 between
+    # the size of the marginal axes and the main axes in both directions.
+    # Also adjust the subplot parameters for a square plot.
+    gs = fig.add_gridspec(2, 2,  width_ratios=(6, 1), height_ratios=(1, 6),
+                          left=0.1, right=0.9, bottom=0.1, top=0.9,
+                          wspace=0.05, hspace=0.05)
+    # Create the Axes.
+    ax = fig.add_subplot(gs[1, 0])
+    ax_histx = fig.add_subplot(gs[0, 0], sharex=ax)
+    ax_histy = fig.add_subplot(gs[1, 1], sharey=ax)
+
+
+    sns.heatmap(cm/(np.sum(cm, axis=1).reshape(-1,1)+1e-10), fmt='.1%', annot=True, 
+                cmap='Blues', cbar=False, ax=ax,
+                annot_kws={"size": 6})
+    ax.set_xlabel("y_pred", fontdict = {'fontsize': 8})
+    ax.set_ylabel("y_true", fontdict = {'fontsize': 8})
+    ax.set_xticklabels(range(nc), fontdict = {'fontsize': 8})
+    ax.set_yticklabels(range(nc), fontdict = {'fontsize': 8})
+
+
+    y_pred_distrib = cm.sum(axis=0)/cm.sum()
+    y_true_distrib = cm.sum(axis=1)/cm.sum()
+    ax_histx.bar(np.arange(nc) + 0.5, y_pred_distrib, alpha=.5, color="steelblue")
+    ax_histx.set_title("y_pred class distribution")
+    ax_histx.title.set_fontsize(8)
+    ax_histx.grid()
+
+    xy_ticks = [0.2, 0.4, 0.6, 0.8]
+    ax_histx.set_yticks(xy_ticks)
+    ax_histx.set_yticklabels(xy_ticks, fontdict = {'fontsize': 8})
+    ax_histx.set_ylim(0,1)
+    for spine in ax_histx.spines.values():
+        spine.set_edgecolor('gray')
+    ax_histx.tick_params(axis='x', pad=0, direction='out', labelbottom=False)
+
+    ax_histy.barh(np.arange(nc) + 0.5, y_true_distrib, alpha=.5, color="steelblue")
+    ax_histy.set_ylabel("y_true class distribution", 
+                        rotation=270, labelpad=-60, 
+                        fontdict = {'fontsize': 8})
+    ax_histy.grid()
+    yx_ticks = [0.2, 0.4, 0.6, 0.8]
+    ax_histy.set_xticks(yx_ticks)
+    ax_histy.set_xticklabels(yx_ticks, fontdict = {'fontsize': 8}, rotation=270)
+    ax_histy.set_xlim(0,1)
+    for spine in ax_histy.spines.values():
+        spine.set_edgecolor('gray')
+    ax_histy.tick_params(axis='y', pad=0, direction='out', labelleft=False)
+
+    tmpfname = f"/tmp/{np.random.randint(1000000)}.png"
+    plt.savefig(tmpfname)
+    plt.close(fig)       
+    img = imread(tmpfname)
+    os.remove(tmpfname)
+    return img
 
 class ProportionsMetrics:
     """
