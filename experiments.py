@@ -110,6 +110,7 @@ def run_experiment(data_generator_split_method,
                    n_batches_online_val = np.inf,
                    log_imgs = False,
                    log_perclass = False,
+                   log_confusion_matrix = False,
                    metrics_args = {},
                    wandb_tags = []
                    ):
@@ -130,6 +131,7 @@ def run_experiment(data_generator_split_method,
                  n_batches_online_val=n_batches_online_val,
                  log_perclass = log_perclass,
                  log_imgs = log_imgs,
+                 log_confusion_matrix = log_confusion_matrix,
                  metrics_args = metrics_args
                  )
     if wproject is not None:

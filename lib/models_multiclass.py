@@ -162,7 +162,7 @@ class GenericUnet:
         self.class_weights_values = list(self.class_weights.values())
         
         # if no zero in class weights set its weight to zero
-        if not 0 in self.class_weights_values:
+        if not 0 in self.class_weights.keys():
             self.class_weights_values = [0] + self.class_weights_values    
 
         self.run_name = f"{self.get_name()}-{self.partitions_id}-{self.loss_name}-{datetime.now().strftime('%Y%m%d[%H%M]')}"
@@ -403,8 +403,10 @@ class GenericUnet:
                 if self.log_confusion_matrix:
                     cm = self.classification_metrics.cm
                     tmpfname = f"/tmp/{np.random.randint(1000000)}.png"
-                    fig, ax = plt.subplots(figsize=(5,5))
-                    sns.heatmap(cm/np.sum(cm), fmt='.1%', annot=True, cmap='Blues', cbar=False, ax=ax)
+                    fig, ax = plt.subplots(figsize=(5+self.number_of_classes/5,5+self.number_of_classes/5))
+                    sns.heatmap(cm/np.sum(cm), fmt='.1%', annot=True, 
+                                cmap='Blues', cbar=False, ax=ax,
+                                annot_kws={"size": 8})
                     plt.xlabel("y_pred")
                     plt.ylabel("y_true")
                     plt.savefig(tmpfname)
