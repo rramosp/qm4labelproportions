@@ -15,6 +15,7 @@ from . import data
 from . import metrics
 from rlxutils import subplots
 import segmentation_models as sm
+import seaborn as sns
 import pandas as pd
 import gc
 import os
@@ -114,7 +115,8 @@ class GenericUnet:
                  n_batches_online_val = np.inf,
                  n_val_samples = 10,
                  log_imgs = False,
-                 log_perclass = False
+                 log_perclass = False,
+                 log_confusion_matrix = False
                 ):
 
         print (f"initializing {self.get_name()}")
@@ -124,6 +126,7 @@ class GenericUnet:
 
         self.log_imgs = log_imgs
         self.log_perclass = log_perclass
+        self.log_confusion_matrix = log_confusion_matrix
         self.partitions_id = data_generator_split_args['partitions_id']
         self.learning_rate = learning_rate
         self.loss_name = loss
@@ -157,7 +160,7 @@ class GenericUnet:
         self.class_weights_values = list(self.class_weights.values())
         
         # if no zero in class weights set its weight to zero
-        if not 0 in self.class_weights_values:
+        if not 0 in self.class_weights.keys():
             self.class_weights_values = [0] + self.class_weights_values    
 
         self.run_name = f"{self.get_name()}-{self.partitions_id}-{self.loss_name}-{datetime.now().strftime('%Y%m%d[%H%M]')}"
@@ -394,7 +397,11 @@ class GenericUnet:
                 if self.log_perclass:
                     log_dict['val/perclass'] = \
                         wandb.Table(columns = ['metric', 'val'], 
-                                    data=[[i,j[0]] for i,j in zip (df_perclass.index, df_perclass.values)])                    
+                                    data=[[i,j[0]] for i,j in zip (df_perclass.index, df_perclass.values)])    
+                if self.log_confusion_matrix:
+                    img = metrics.plot_confusion_matrix(self.classification_metrics.cm)
+                    log_dict['val/confusion_matrix'] = wandb.Image(img, caption="confusion matrix")
+         
                 wandb.log(log_dict)
 
             # log to screen
