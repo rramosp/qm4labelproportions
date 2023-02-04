@@ -25,6 +25,7 @@ class ClassificationMetrics:
         self.tn = {i:0 for i in self.classes}
         self.fp = {i:0 for i in self.classes}
         self.fn = {i:0 for i in self.classes}
+        self.cm = np.zeros((self.number_of_classes, self.number_of_classes))
         self.number_of_pixels = {i:0 for i in self.classes}
         self.total_pixels = 0
         
@@ -51,6 +52,14 @@ class ClassificationMetrics:
             self.fp[i] += tf.reduce_sum(y_true_zeros * y_pred_ones)
             self.fn[i] += tf.reduce_sum(y_true_ones  * y_pred_zeros)
             self.number_of_pixels[i] += tf.reduce_sum(y_true_ones)
+
+        # update confusion matrix
+        self.cm = np.zeros((self.number_of_classes, self.number_of_classes))
+
+        for classid in range(self.number_of_classes):
+            y_pred_classid = y_pred[y_true==classid]
+            for c,n in zip(*np.unique(y_pred_classid, return_counts=True)):
+                self.cm[classid, c] += n
             
     def accuracy(self, tp, tn, fp, fn):
         denominator = tp + tn + fp + fn
@@ -79,6 +88,9 @@ class ClassificationMetrics:
             return tp / denominator
 
     def result(self, metric_name, mode='micro'):
+        if metric_name=='confusion_matrix':
+            return self.cm
+
         if not mode in ['per_class', 'micro', 'macro', 'weighted']:
             raise ValueError(f"invalid mode '{mode}'")
         

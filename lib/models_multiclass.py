@@ -15,9 +15,12 @@ from . import data
 from . import metrics
 from rlxutils import subplots
 import segmentation_models as sm
+import seaborn as sns
 import pandas as pd
 import gc
 import os
+from skimage.io import imread
+
 
 
 def get_next_file_path(path, base_name, ext):
@@ -114,7 +117,8 @@ class GenericUnet:
                  n_batches_online_val = np.inf,
                  n_val_samples = 10,
                  log_imgs = False,
-                 log_perclass = False
+                 log_perclass = False,
+                 log_confusion_matrix = False
                 ):
 
         print (f"initializing {self.get_name()}")
@@ -124,6 +128,7 @@ class GenericUnet:
 
         self.log_imgs = log_imgs
         self.log_perclass = log_perclass
+        self.log_confusion_matrix = log_confusion_matrix
         self.partitions_id = data_generator_split_args['partitions_id']
         self.learning_rate = learning_rate
         self.loss_name = loss
@@ -394,7 +399,20 @@ class GenericUnet:
                 if self.log_perclass:
                     log_dict['val/perclass'] = \
                         wandb.Table(columns = ['metric', 'val'], 
-                                    data=[[i,j[0]] for i,j in zip (df_perclass.index, df_perclass.values)])                    
+                                    data=[[i,j[0]] for i,j in zip (df_perclass.index, df_perclass.values)])    
+                if self.log_confusion_matrix:
+                    cm = self.classification_metrics.cm
+                    tmpfname = f"/tmp/{np.random.randint(1000000)}.png"
+                    fig, ax = plt.subplots(figsize=(5,5))
+                    sns.heatmap(cm/np.sum(cm), fmt='.1%', annot=True, cmap='Blues', cbar=False, ax=ax)
+                    plt.xlabel("y_pred")
+                    plt.ylabel("y_true")
+                    plt.savefig(tmpfname)
+                    plt.close(fig)       
+                    img = imread(tmpfname)
+                    os.remove(tmpfname)
+                    log_dict['val/confusion_matrix'] = wandb.Image(img, caption="confusion matrix")
+         
                 wandb.log(log_dict)
 
             # log to screen
