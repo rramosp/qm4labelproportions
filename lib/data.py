@@ -322,6 +322,9 @@ class S2LandcoverDataGenerator(tf.keras.utils.Sequence):
         """
         assert basedir is not None, "must set 'basedir'"
         assert partitions_id is not None, "must set 'partitions_id'"
+        
+        if basedir.endswith("/data"):
+            basedir = basedir[:-5]
 
         split_file = f"{basedir}/splits.csv"
 

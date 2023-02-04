@@ -54,8 +54,6 @@ class ClassificationMetrics:
             self.number_of_pixels[i] += tf.reduce_sum(y_true_ones)
 
         # update confusion matrix
-        self.cm = np.zeros((self.number_of_classes, self.number_of_classes))
-
         for classid in range(self.number_of_classes):
             y_pred_classid = y_pred[y_true==classid]
             for c,n in zip(*np.unique(y_pred_classid, return_counts=True)):
