@@ -343,7 +343,11 @@ class GenericUnet:
             # measure stuff on validation for reporting
             losses, ious, maeps, maeps_perclass = [], [], [], []
             max_value = np.min([len(self.val),self.n_batches_online_val ]).astype(int)
-            self.classification_metrics.reset_state()
+
+            self.epoch_val_classification_metrics = metrics.ClassificationMetrics(
+                number_of_classes=self.number_of_classes
+            )            
+            self.epoch_val_classification_metrics.reset_state()
             for i, (x, (p,l)) in pbar(enumerate(self.val), max_value=max_value):
                 if i>=self.n_batches_online_val:
                     break
@@ -356,14 +360,14 @@ class GenericUnet:
                 if self.produces_pixel_predictions():
                     ious.append(self.metrics.compute_iou(l,out))
 
-                self.classification_metrics.update_state(l,out)
+                self.epoch_val_classification_metrics.update_state(l,out)
                     
             # summarize validation stuff
             val_loss = np.mean(losses)
             val_mean_mae = np.mean(maeps)
             txt_metrics = f"mae {val_mean_mae:.5f}"
             if self.produces_pixel_predictions():
-                val_mean_f1 = np.mean(self.classification_metrics.result('f1', 'micro'))
+                val_mean_f1 = np.mean(self.epoch_val_classification_metrics.result('f1', 'micro'))
                 val_mean_iou = np.mean(ious)
                 txt_metrics += f" f1 {val_mean_f1:.5f} iou {val_mean_iou:.5f}"
                 
@@ -377,10 +381,10 @@ class GenericUnet:
             r.update({f'maeprops_on_chip::class_{k}':v for k,v in zip(range(0, self.number_of_classes), np.r_[maeps_perclass].mean(axis=0))})
 
             if self.produces_pixel_predictions(): 
-                r['f1::global']  = self.classification_metrics.result('f1', 'micro').numpy()
+                r['f1::global']  = self.epoch_val_classification_metrics.result('f1', 'micro').numpy()
                 r['iou::global'] = np.mean(ious)
-                r.update({f'f1::class_{k}':tf.constant(v).numpy() for k,v in self.classification_metrics.result('f1', 'per_class').items()})
-                r.update({f'iou::class_{k}':tf.constant(v).numpy() for k,v in self.classification_metrics.result('iou', 'per_class').items()})
+                r.update({f'f1::class_{k}':tf.constant(v).numpy() for k,v in self.epoch_val_classification_metrics.result('f1', 'per_class').items()})
+                r.update({f'iou::class_{k}':tf.constant(v).numpy() for k,v in self.epoch_val_classification_metrics.result('iou', 'per_class').items()})
 
             df_perclass = pd.DataFrame([{k:v for k,v in r.items() if 'global' not in k and k!='loss'}], index=["val"]).T
 
@@ -399,7 +403,7 @@ class GenericUnet:
                         wandb.Table(columns = ['metric', 'val'], 
                                     data=[[i,j[0]] for i,j in zip (df_perclass.index, df_perclass.values)])    
                 if self.log_confusion_matrix:
-                    img = metrics.plot_confusion_matrix(self.classification_metrics.cm)
+                    img = metrics.plot_confusion_matrix(self.epoch_val_classification_metrics.cm)
                     log_dict['val/confusion_matrix'] = wandb.Image(img, caption="confusion matrix")
          
                 wandb.log(log_dict)
@@ -420,14 +424,22 @@ class GenericUnet:
 
         losses, maeps, ious = [], [], []
         mae_perclass = []
-        self.classification_metrics.reset_state()
+
+        if not 'summary_classification_metrics' in dir(self):
+            self.summary_classification_metrics = {}
+
+        self.summary_classification_metrics[dataset_name] = metrics.ClassificationMetrics(
+            number_of_classes=self.number_of_classes
+        )            
+        cmetrics = self.summary_classification_metrics[dataset_name]
+        cmetrics.reset_state()
         for x, (p,l) in pbar(dataset):
             x,l = self.normitem(x,l)
             out = self.predict(x)
             if self.produces_pixel_predictions():
                 iou = self.metrics.compute_iou(l, out)
                 ious.append(iou)
-                self.classification_metrics.update_state(l, out)
+                cmetrics.update_state(l, out)
                 
             losses.append(self.get_loss(out,p,l).numpy())
             maeps.append(self.metrics.multiclass_proportions_mae_on_chip(l, out).numpy())
@@ -437,10 +449,10 @@ class GenericUnet:
         r.update({f'maeprops_on_chip::class_{k}':v for k,v in zip(range(0, self.number_of_classes), np.r_[mae_perclass].mean(axis=0))})
 
         if self.produces_pixel_predictions(): 
-            r['f1::global']  = self.classification_metrics.result('f1', 'micro').numpy()
+            r['f1::global']  = cmetrics.result('f1', 'micro').numpy()
             r['iou::global'] = np.mean(ious)
-            r.update({f'f1::class_{k}':tf.constant(v).numpy() for k,v in self.classification_metrics.result('f1', 'per_class').items()})
-            r.update({f'iou::class_{k}':tf.constant(v).numpy() for k,v in self.classification_metrics.result('iou', 'per_class').items()})
+            r.update({f'f1::class_{k}':tf.constant(v).numpy() for k,v in cmetrics.result('f1', 'per_class').items()})
+            r.update({f'iou::class_{k}':tf.constant(v).numpy() for k,v in cmetrics.result('iou', 'per_class').items()})
 
         return r
     
