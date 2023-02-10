@@ -211,13 +211,17 @@ class ProportionsMetrics:
     class containing methods for label proportions metrics and losses
     """
 
-    def __init__(self, class_weights_values, proportions_argmax=False, p_for_norm = 1, lambda_reg=0.0):
+    def __init__(self, class_weights_values, 
+                       mse_proportions_argmax=False, 
+                       mae_proportions_argmax=False,
+                       p_for_norm = 1, lambda_reg=0.0):
         """
         proportions_argmax: see get_y_pred_as_proportions
         """
         self.class_weights_values = np.r_[class_weights_values]
         self.number_of_classes = len(self.class_weights_values)
-        self.proportions_argmax = proportions_argmax
+        self.mse_proportions_argmax = mse_proportions_argmax
+        self.mae_proportions_argmax = mae_proportions_argmax
         self.p_for_norm = p_for_norm
         self.lambda_reg = lambda_reg
 
@@ -332,19 +336,18 @@ class ProportionsMetrics:
                 # compute the proportions by averaging each class. Softmax output guarantees all will add up to one.
                 r = tf.reduce_mean(y_pred, axis=[1,2])
         else:
-            # if we already have a probabilities vector return it as such
+            # if we already have a probabilities vector, return it as such
             r = y_pred
 
         return r        
 
 
-    def multiclass_proportions_mse(self, true_proportions, y_pred, argmax=None):
+    def multiclass_proportions_mse(self, true_proportions, y_pred):
         """
         computes the mse between proportions on probability predictions (y_pred)
         and target_proportions, using the class_weights in this instance.
         
         y_pred:  see y_pred in get_y_pred_as_proportions
-        argmax: see get_y_pred_as_proportions
 
         returns: a float with mse.
         """
@@ -352,7 +355,7 @@ class ProportionsMetrics:
         assert len(true_proportions.shape)==2 and true_proportions.shape[-1]==self.number_of_classes
 
         # compute the proportions on prediction
-        proportions_y_pred = self.get_y_pred_as_proportions(y_pred, argmax)
+        proportions_y_pred = self.get_y_pred_as_proportions(y_pred, argmax = self.mse_proportions_argmax)
 
         # regularization promoting sparsity. divide by max_pnorm to ensure value in [0,1]
         reg = tf.reduce_mean(
@@ -368,13 +371,12 @@ class ProportionsMetrics:
         )
         return r + reg
         
-    def multiclass_proportions_mae(self, true_proportions, y_pred, argmax=None, perclass=False):
+    def multiclass_proportions_mae(self, true_proportions, y_pred, perclass=False):
         """
         computes the mae between proportions on probability predictions (y_pred)
         and target_proportions. NO CLASS WEIGHTS ARE USED.
 
         y_pred: see y_pred in get_y_pred_as_proportions
-        argmax: see get_y_pred_as_proportions
         perclass: if true returns a vector of length num_classes with the mae on each class
 
         returns: a float with mse if perclass=False, otherwise a vector
@@ -383,7 +385,7 @@ class ProportionsMetrics:
         assert len(true_proportions.shape)==2 and true_proportions.shape[-1]==self.number_of_classes
 
         # compute the proportions on prediction
-        proportions_y_pred = self.get_y_pred_as_proportions(y_pred, argmax)
+        proportions_y_pred = self.get_y_pred_as_proportions(y_pred, argmax = self.mae_proportions_argmax)
 
         # compute mae per class
         r = tf.reduce_mean(
@@ -435,7 +437,7 @@ class ProportionsMetrics:
         )
         return loss
 
-    def multiclass_proportions_mae_on_chip(self, y_true, y_pred, argmax=None, perclass=False):
+    def multiclass_proportions_mae_on_chip(self, y_true, y_pred, perclass=False):
         """
         computes the mse between the proportions observed in a prediction wrt to a mask
         y_pred: a tf tensor of shape [batch_size, pixel_size, pixel_size, number_of_classes] with probability predictions
@@ -446,7 +448,7 @@ class ProportionsMetrics:
         returns: a float with mse
         """
         p_true = self.get_class_proportions_on_masks(y_true)
-        return self.multiclass_proportions_mae(p_true, y_pred, argmax=argmax, perclass=perclass)
+        return self.multiclass_proportions_mae(p_true, y_pred, perclass=perclass)
     
     def compute_iou(self, y_true, y_pred):
         """
