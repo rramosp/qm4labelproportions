@@ -20,6 +20,10 @@ import pandas as pd
 import gc
 import os
 
+# run unit tests on metrics
+from .tests import testmetrics
+testmetrics.run()
+
 
 def get_next_file_path(path, base_name, ext):
     i = 1
@@ -249,7 +253,7 @@ class GenericUnet:
                 cbar.ax.set_yticklabels([f"{i}" for i in range(self.number_of_classes)])  # vertically oriented colorbar
                     
             if row==2 and self.produces_pixel_predictions():
-                cmetrics = metrics.ClassificationMetrics(number_of_classes=self.number_of_classes)
+                cmetrics = metrics.PixelClassificationMetrics(number_of_classes=self.number_of_classes)
                 cmetrics.reset_state()
                 cmetrics.update_state(val_l[i:i+1], val_out[i:i+1])
                 f1 = cmetrics.result('f1', 'micro')
@@ -341,7 +345,7 @@ class GenericUnet:
             # measure stuff on validation for reporting
             losses, ious, maeps, maeps_perclass = [], [], [], []
             max_value = np.min([len(self.val),self.n_batches_online_val ]).astype(int)
-            self.val_classification_metrics = metrics.ClassificationMetrics(number_of_classes=self.number_of_classes)
+            self.val_classification_metrics = metrics.PixelClassificationMetrics(number_of_classes=self.number_of_classes)
             self.val_classification_metrics.reset_state()
             for i, (x, (p,l)) in pbar(enumerate(self.val), max_value=max_value):
                 if i>=self.n_batches_online_val:
@@ -422,7 +426,7 @@ class GenericUnet:
 
         losses, maeps, ious = [], [], []
         mae_perclass = []
-        self.summary_classification_metrics = metrics.ClassificationMetrics(number_of_classes=self.number_of_classes)
+        self.summary_classification_metrics = metrics.PixelClassificationMetrics(number_of_classes=self.number_of_classes)
         self.summary_classification_metrics.reset_state()
         for x, (p,l) in pbar(dataset):
             x,l = self.normitem(x,l)
