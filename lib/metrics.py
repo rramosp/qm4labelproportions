@@ -5,8 +5,7 @@ import matplotlib.pyplot as plt
 from skimage.io import imread
 import seaborn as sns
 import os
-
-class ClassificationMetrics:
+class PixelClassificationMetrics:
     """
     accumulates tp,tn,fp,fn per class and computes metrics on them
     accepts batches of images
@@ -33,16 +32,19 @@ class ClassificationMetrics:
         self.total_pixels = 0
         
     def update_state(self, y_true, y_pred):
+        """
+        y_true: input of shape [n_batches, x, y] with multiclass label for each pixel
+        y_pred: input of shape [n_batches, x, y, n_classes] with class probabilities for each pixel
+        """
         # resize smallest
-        if y_true.shape[-1]<y_pred.shape[-1]:
-            y_true = tf.image.resize(y_true[..., tf.newaxis], y_pred.shape[1:], method='nearest')[:,:,:,0]
+        if y_true.shape[1]<y_pred.shape[1]:
+            y_true = tf.image.resize(y_true[..., tf.newaxis], y_pred.shape[1:3], method='nearest')[:,:,:,0]
 
-        if y_pred.shape[-1]<y_true.shape[-1]:
-            y_pred = tf.image.resize(y_pred, y_true.shape[1:], method='nearest')
+        if y_pred.shape[1]<y_true.shape[1]:
+            y_pred = tf.image.resize(y_pred, y_true.shape[1:3], method='nearest')
         
         # choose class with highest probability for prediction
         y_pred = tf.argmax(y_pred, axis=-1)
-
         self.total_pixels += tf.cast(tf.reduce_prod(y_true.shape), tf.float32)
         for i in self.classes:
             y_true_ones  = tf.cast(y_true==i, tf.float32)
@@ -61,6 +63,8 @@ class ClassificationMetrics:
             y_pred_classid = y_pred[y_true==classid]
             for c,n in zip(*np.unique(y_pred_classid, return_counts=True)):
                 self.cm[classid, c] += n
+
+        return self
             
     def accuracy(self, tp, tn, fp, fn):
         denominator = tp + tn + fp + fn
@@ -318,7 +322,7 @@ class ProportionsMetrics:
         assert (len(y_pred.shape)==4 or len(y_pred.shape)==2) and y_pred.shape[-1]==self.number_of_classes
 
         if argmax is None:
-            argmax = self.proportions_argmax
+            argmax = False
 
         # compute the proportions on prediction
         if len(y_pred.shape)==4:
@@ -327,7 +331,7 @@ class ProportionsMetrics:
                 # compute proportions by selecting the class with highest assigned probability in each pixel
                 # and then computing the proportions of selected classes across each image.
                 # cannot use tf.argmax since it is not differentiable. this workaround substracts the max value
-                # of each pixel from all classes and compares to zero, to substitute argmax
+                # of each pixel from all classes and compares to zero using a sigmoid instead
                 y_pred_argmax = y_pred - tf.reduce_max(y_pred, axis=-1, keepdims=True)
                 y_pred_argmax = tf.sigmoid( (y_pred_argmax*1e4 + 1)*1e1)
                 r = tf.reduce_mean(y_pred_argmax, axis=[1,2])
