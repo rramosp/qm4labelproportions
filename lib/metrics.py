@@ -166,7 +166,7 @@ def plot_confusion_matrix(cm):
                 cmap='Blues', cbar=False, ax=ax,
                 annot_kws={"size": 6})
     ax.set_xlabel("y_pred", fontdict = {'fontsize': 8})
-    ax.set_ylabel("y_true", fontdict = {'fontsize': 8})
+    ax.set_ylabel("y_true\n(rows add up to one)", fontdict = {'fontsize': 8})
     ax.set_xticklabels(range(nc), fontdict = {'fontsize': 8})
     ax.set_yticklabels(range(nc), fontdict = {'fontsize': 8})
 

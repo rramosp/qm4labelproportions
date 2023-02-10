@@ -366,6 +366,20 @@ class GenericUnet:
                 val_mean_iou = np.mean(ious)
                 txt_metrics += f" f1 {val_mean_f1:.5f} iou {val_mean_iou:.5f}"
                 
+            # assemble per class metrics
+            r = {'loss': np.mean(losses), 'maeprops_on_chip::global': np.mean(maeps)}
+            r.update({f'maeprops_on_chip::class_{k}':v for k,v in zip(range(0, self.number_of_classes), np.r_[maeps_perclass].mean(axis=0))})
+
+            if self.produces_pixel_predictions(): 
+                r['f1::global']  = self.val_classification_metrics.result('f1', 'micro').numpy()
+                r['iou::global'] = np.mean(ious)
+                r.update({f'f1::class_{k}':tf.constant(v).numpy() for k,v in self.val_classification_metrics.result('f1', 'per_class').items()})
+                r.update({f'iou::class_{k}':tf.constant(v).numpy() for k,v in self.val_classification_metrics.result('iou', 'per_class').items()})
+
+            df_perclass = pd.DataFrame([{k:v for k,v in r.items() if 'global' not in k and k!='loss'}], index=["val"]).T
+
+
+
             # save model and log images if better val loss
             if val_loss < min_val_loss:
                 min_val_loss = val_loss
@@ -381,18 +395,6 @@ class GenericUnet:
                         log_dict['val/perclass'] = \
                             wandb.Table(columns = ['metric', 'val'], 
                                         data=[[i,j[0]] for i,j in zip (df_perclass.index, df_perclass.values)])    
-                    
-            # assemble per class metrics
-            r = {'loss': np.mean(losses), 'maeprops_on_chip::global': np.mean(maeps)}
-            r.update({f'maeprops_on_chip::class_{k}':v for k,v in zip(range(0, self.number_of_classes), np.r_[maeps_perclass].mean(axis=0))})
-
-            if self.produces_pixel_predictions(): 
-                r['f1::global']  = self.val_classification_metrics.result('f1', 'micro').numpy()
-                r['iou::global'] = np.mean(ious)
-                r.update({f'f1::class_{k}':tf.constant(v).numpy() for k,v in self.val_classification_metrics.result('f1', 'per_class').items()})
-                r.update({f'iou::class_{k}':tf.constant(v).numpy() for k,v in self.val_classification_metrics.result('iou', 'per_class').items()})
-
-            df_perclass = pd.DataFrame([{k:v for k,v in r.items() if 'global' not in k and k!='loss'}], index=["val"]).T
 
             # log to wandb
             if self.wandb_project is not None:
@@ -403,7 +405,7 @@ class GenericUnet:
                 log_dict["val/maeprops_on_chip"] = val_mean_mae
          
                 wandb.log(log_dict)
-
+                
             # log to screen
             print (f"epoch {epoch:3d}, train loss {tr_loss:.5f}", flush=True)
             print (f"epoch {epoch:3d},   val loss {val_loss:.5f} {txt_metrics}", flush=True)
