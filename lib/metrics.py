@@ -217,7 +217,8 @@ class ProportionsMetrics:
 
     def __init__(self, class_weights_values, 
                        mse_proportions_argmax=False, 
-                       mae_proportions_argmax=False,
+                       kldiv_proportions_argmax=False, 
+                       mae_proportions_argmax=True,
                        p_for_norm = 1, lambda_reg=0.0):
         """
         proportions_argmax: see get_y_pred_as_proportions
@@ -226,6 +227,7 @@ class ProportionsMetrics:
         self.number_of_classes = len(self.class_weights_values)
         self.mse_proportions_argmax = mse_proportions_argmax
         self.mae_proportions_argmax = mae_proportions_argmax
+        self.kldiv_proportions_argmax = kldiv_proportions_argmax
         self.p_for_norm = p_for_norm
         self.lambda_reg = lambda_reg
 
@@ -374,6 +376,31 @@ class ProportionsMetrics:
                 )
         )
         return r + reg
+
+
+    def kldiv(self, true_proportions, y_pred):
+        """
+        computes the kl divergence between two proportions of labels
+        y_pred:  see y_pred in get_y_pred_as_proportions
+
+        returns: a float .
+        """
+
+        assert len(true_proportions.shape)==2 and true_proportions.shape[-1]==self.number_of_classes
+
+        # compute the proportions on prediction
+        proportions_y_pred = self.get_y_pred_as_proportions(y_pred, argmax = self.kldiv_proportions_argmax)
+        # compute mse using class weights
+        r = tf.reduce_mean(
+                tf.reduce_sum(
+                    true_proportions \
+                    * (tf.math.log(true_proportions + 1e-5) - tf.math.log(proportions_y_pred + 1e-5)) \
+                    * self.class_weights_values, 
+                    
+                    axis=-1
+                )
+        )
+        return r        
         
     def multiclass_proportions_mae(self, true_proportions, y_pred, perclass=False):
         """

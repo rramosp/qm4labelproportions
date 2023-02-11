@@ -309,8 +309,13 @@ class GenericUnet:
     def get_loss(self, out, p, l): 
         if self.loss_name in ['multiclass_proportions_mse', 'mse']:
             return self.metrics.multiclass_proportions_mse(p, out)
+
+        if self.loss_name in ['kldiv']:
+            return self.metrics.kldiv(p, out)
+
         if self.loss_name in ['multiclass_LSRN_loss', 'lsrn']:
             return self.metrics.multiclass_LSRN_loss(p, out)
+        
         raise ValueError(f"unkown loss '{self.loss_name}'")
 
     def predict(self, x):
