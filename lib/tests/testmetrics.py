@@ -131,9 +131,6 @@ def run():
        assert np.allclose(f1, cm.update_state(y_true_argmax, y_pred).result('f1', 'micro'), atol=1e-5), \
               "f1 micro does not match"
 
-       print ("check metrics with selected data ok")
-
-
 
        # --------------------------------------------------------------------------------------------------
        # --------------------------------------------------------------------------------------------------
@@ -245,4 +242,3 @@ def run():
                                    atol=1e-5),\
                      "f1 micro on random data does not match"
               
-       print ("check metrics with random data ok")

@@ -12,6 +12,15 @@ from pyproj.crs import CRS
 import pathlib
 import geopandas as gpd
 from progressbar import progressbar as pbar
+import hashlib
+
+
+
+def gethash(s: str):
+    k = int(hashlib.sha256(s.encode('utf-8')).hexdigest(), 16) % 10**15
+    k = str(hex(k))[2:].zfill(13)
+    return k
+
 
 class Chipset:
     
@@ -39,6 +48,9 @@ class Chip:
         # if no filename create and empty instance
         if filename is None:
             return
+
+        if not filename.endswith(".pkl"):
+            filename = f"{filename}.pkl"
 
         self.filename = filename
 
@@ -230,7 +242,7 @@ class Chip:
 
 
 
-class S2LandcoverDataGenerator(tf.keras.utils.Sequence):
+class GeoDataGenerator(tf.keras.utils.Sequence):
     """
     from https://stanford.edu/~shervine/blog/keras-how-to-generate-data-on-the-fly
     """
@@ -361,7 +373,8 @@ class S2LandcoverDataGenerator(tf.keras.utils.Sequence):
                  class_groups = class_groups,
                  batch_size = batch_size, 
                  shuffle = shuffle,
-                 max_chips = max_chips
+                 max_chips = max_chips,
+                 save_partitions_map = True
                  )
         ts = cls(basedir=datadir, 
                  chips_basedirs=split_files['test'], 
@@ -370,7 +383,8 @@ class S2LandcoverDataGenerator(tf.keras.utils.Sequence):
                  class_groups = class_groups,
                  batch_size = batch_size, 
                  shuffle = shuffle,
-                 max_chips = max_chips
+                 max_chips = max_chips,
+                 save_partitions_map = True
                  )
         val = cls(basedir=datadir, 
                   chips_basedirs=split_files['val'], 
@@ -379,7 +393,8 @@ class S2LandcoverDataGenerator(tf.keras.utils.Sequence):
                   class_groups = class_groups,
                   batch_size = batch_size, 
                   shuffle = shuffle,
-                  max_chips = max_chips
+                  max_chips = max_chips,
+                  save_partitions_map = True
                   )
         
         return tr, ts, val        
@@ -391,12 +406,27 @@ class S2LandcoverDataGenerator(tf.keras.utils.Sequence):
                  cache_size=100,
                  chips_basedirs=None,
                  max_chips = None,
-                 class_groups = None
+                 class_groups = None,
+                 save_partitions_map = False
                  ):
 
         """
         class_groups: see Chip.group_classes
+        batch_size: can use 'per_partition' instead of int to make batches with chips
+                    falling in the same partition
         """
+
+        if not isinstance(batch_size, int) and batch_size!='per_partition':
+            raise ValueError("batch_size must be int or the string 'per_partition'")
+
+        if batch_size == 'per_partition' and partitions_id=='aschip':
+            raise ValueError("cannot have batch_size 'per_partition' and partitions_id 'aschip'")
+
+        self.batch_size = batch_size
+        self.shuffle = shuffle
+        self.partitions_id = partitions_id
+        self.cache = {}
+        self.cache_size = cache_size
 
         if 'data' in os.listdir(basedir):
             basedir = f"{basedir}/data"
@@ -416,7 +446,10 @@ class S2LandcoverDataGenerator(tf.keras.utils.Sequence):
             self.chips_basedirs = cs.files
         else:
             self.chips_basedirs = chips_basedirs    
-            
+
+        self.save_partitions_map = save_partitions_map 
+        self.hashcode = gethash("".join(np.sort(self.chips_basedirs)))
+
         if shuffle:
             self.chips_basedirs = np.random.permutation(self.chips_basedirs)
 
@@ -430,14 +463,39 @@ class S2LandcoverDataGenerator(tf.keras.utils.Sequence):
         else:
             self.number_of_output_classes = len(self.class_groups)+1
 
-        self.batch_size = batch_size
-        self.shuffle = shuffle
-        self.partitions_id = partitions_id
+        if self.batch_size == 'per_partition':
+            self.load_partitions_map()
+
+        if self.batch_size == 'per_partition':
+            info = ". loaded partitions map"
+        else:
+            info = ""
+
+        print (f"got {len(self.chips_basedirs):6d} chips on {len(self)} batches. cache size is {self.cache_size}{info}")
+
         self.on_epoch_end()
-        self.cache = {}
-        self.cache_size = cache_size
- 
-        print (f"got {len(self.chips_basedirs):6d} chips on {len(self)} batches. cache size is {self.cache_size}")
+
+        
+
+    def load_partitions_map(self):
+        partitions_map_file = f'{self.basedir}/../partitions_map_{self.hashcode}.csv'    
+        if os.path.isfile(partitions_map_file) and self.save_partitions_map:
+            r = pd.read_csv(partitions_map_file)
+        else:
+            r = []
+            for chip_basedir in self.chips_basedirs:
+                c = Chip(f"{self.basedir}/{chip_basedir}")
+                cr = {k:v['partition_id'] for k,v in c.data['label_proportions'].items() if 'partition_id' in v.keys()}
+                cr['chip_id'] = c.data['chip_id']
+                r.append(cr)
+
+            r = pd.DataFrame(r)   
+            if self.save_partitions_map:    
+                r.to_csv(partitions_map_file, index=False)
+            
+        self.partitions_map = r
+        self.partitions_batches = self.partitions_map.groupby(f'partitions_{self.partitions_id}')[['chip_id']].agg(lambda x: list(x))
+        
 
     def get_number_of_input_classes(self):
         return 12
@@ -447,24 +505,35 @@ class S2LandcoverDataGenerator(tf.keras.utils.Sequence):
 
     def __len__(self):
         'Denotes the number of batches per epoch'
-        return int(np.floor(len(self.chips_basedirs) / self.batch_size))
+        if self.batch_size == 'per_partition':
+            return len(self.partitions_batches)
+        else:
+            return int(np.floor(len(self.chips_basedirs) / self.batch_size))
 
     def on_epoch_end(self):
         'Updates indexes after each epoch'
-        self.indexes = np.arange(len(self.chips_basedirs))
+        if self.batch_size == 'per_partition':
+            self.indexes = np.arange(len(self.partitions_batches))
+        else:
+            self.indexes = np.arange(len(self.chips_basedirs))
+
         if self.shuffle == True:
             np.random.shuffle(self.indexes)
 
     def __getitem__(self, index):
         'Generate one batch of data'
-        # Generate indexes of the batch
-        indexes = self.indexes[index*self.batch_size:(index+1)*self.batch_size]
+        if self.batch_size == 'per_partition':
+            batch_chips_basedirs = self.partitions_batches.iloc[index].chip_id
 
-        # Find list of IDs
-        chips_basedirs_temp = [self.chips_basedirs[k] for k in indexes]
+        else:
+            # Generate indexes of the batch
+            indexes = self.indexes[index*self.batch_size:(index+1)*self.batch_size]
+
+            # Find list of IDs
+            batch_chips_basedirs = [self.chips_basedirs[k] for k in indexes]
 
         # Generate data
-        x = self.__data_generation(chips_basedirs_temp)
+        x = self.__data_generation(batch_chips_basedirs)
 
         return x
 
@@ -502,16 +571,16 @@ class S2LandcoverDataGenerator(tf.keras.utils.Sequence):
                 self.cache[chip_filename] = r
             return r
 
-    def __data_generation(self, chips_basedirs_temp):
+    def __data_generation(self, batch_chips_basedirs):
         'Generates data containing batch_size samples' 
         # X : (n_samples, *dim, n_channels)
         # Initialization
-        X = np.empty((self.batch_size, 100, 100, 3), dtype=np.float32)
-        labels = np.zeros((self.batch_size, 100, 100), dtype=np.int16)
-        partition_proportions = np.empty((self.batch_size, self.number_of_output_classes), dtype=np.float32)
+        X = np.empty((len(batch_chips_basedirs), 100, 100, 3), dtype=np.float32)
+        labels = np.zeros((len(batch_chips_basedirs), 100, 100), dtype=np.int16)
+        partition_proportions = np.empty((len(batch_chips_basedirs), self.number_of_output_classes), dtype=np.float32)
 
         # Assemble data in a batch
-        for i, chip_id in enumerate(chips_basedirs_temp):
+        for i, chip_id in enumerate(batch_chips_basedirs):
             chip_mean, label, p = self.load_chip(chip_id)
             X[i,] = chip_mean/256
             labels[i,] = label
@@ -609,7 +678,7 @@ class S2LandcoverDataGenerator(tf.keras.utils.Sequence):
             return fig
 
 
-class S2_ESAWorldCover_DataGenerator(S2LandcoverDataGenerator):
+class S2_ESAWorldCover_DataGenerator(GeoDataGenerator):
 
     def get_number_of_input_classes(self):
         return 12
@@ -618,7 +687,7 @@ class S2_ESAWorldCover_DataGenerator(S2LandcoverDataGenerator):
         return {'0': 'none', '1': 'water', '2': 'trees', '3': 'not used', '4': 'flooded vegetation', '5': 'crops',
                 '6': 'not used', '7': 'built area', '8': 'bare ground', '9': 'snow/ice', '10': 'clouds', '11': 'rangeland'}
 
-class S2_EUCrop_DataGenerator(S2LandcoverDataGenerator):
+class S2_EUCrop_DataGenerator(GeoDataGenerator):
 
     def get_number_of_input_classes(self):
         return 23
