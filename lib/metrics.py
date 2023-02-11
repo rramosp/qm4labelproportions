@@ -2,8 +2,10 @@ import tensorflow as tf
 import numpy as np
 from rlxutils import subplots
 import matplotlib.pyplot as plt
-
-class ClassificationMetrics:
+from skimage.io import imread
+import seaborn as sns
+import os
+class PixelClassificationMetrics:
     """
     accumulates tp,tn,fp,fn per class and computes metrics on them
     accepts batches of images
@@ -25,20 +27,24 @@ class ClassificationMetrics:
         self.tn = {i:0 for i in self.classes}
         self.fp = {i:0 for i in self.classes}
         self.fn = {i:0 for i in self.classes}
+        self.cm = np.zeros((self.number_of_classes, self.number_of_classes))
         self.number_of_pixels = {i:0 for i in self.classes}
         self.total_pixels = 0
         
     def update_state(self, y_true, y_pred):
+        """
+        y_true: input of shape [n_batches, x, y] with multiclass label for each pixel
+        y_pred: input of shape [n_batches, x, y, n_classes] with class probabilities for each pixel
+        """
         # resize smallest
-        if y_true.shape[-1]<y_pred.shape[-1]:
-            y_true = tf.image.resize(y_true[..., tf.newaxis], y_pred.shape[1:], method='nearest')[:,:,:,0]
+        if y_true.shape[1]<y_pred.shape[1]:
+            y_true = tf.image.resize(y_true[..., tf.newaxis], y_pred.shape[1:3], method='nearest')[:,:,:,0]
 
-        if y_pred.shape[-1]<y_true.shape[-1]:
-            y_pred = tf.image.resize(y_pred, y_true.shape[1:], method='nearest')
+        if y_pred.shape[1]<y_true.shape[1]:
+            y_pred = tf.image.resize(y_pred, y_true.shape[1:3], method='nearest')
         
         # choose class with highest probability for prediction
         y_pred = tf.argmax(y_pred, axis=-1)
-
         self.total_pixels += tf.cast(tf.reduce_prod(y_true.shape), tf.float32)
         for i in self.classes:
             y_true_ones  = tf.cast(y_true==i, tf.float32)
@@ -51,6 +57,14 @@ class ClassificationMetrics:
             self.fp[i] += tf.reduce_sum(y_true_zeros * y_pred_ones)
             self.fn[i] += tf.reduce_sum(y_true_ones  * y_pred_zeros)
             self.number_of_pixels[i] += tf.reduce_sum(y_true_ones)
+
+        # update confusion matrix
+        for classid in range(self.number_of_classes):
+            y_pred_classid = y_pred[y_true==classid]
+            for c,n in zip(*np.unique(y_pred_classid, return_counts=True)):
+                self.cm[classid, c] += n
+
+        return self
             
     def accuracy(self, tp, tn, fp, fn):
         denominator = tp + tn + fp + fn
@@ -79,6 +93,9 @@ class ClassificationMetrics:
             return tp / denominator
 
     def result(self, metric_name, mode='micro'):
+        if metric_name=='confusion_matrix':
+            return self.cm
+
         if not mode in ['per_class', 'micro', 'macro', 'weighted']:
             raise ValueError(f"invalid mode '{mode}'")
         
@@ -131,53 +148,101 @@ def pnorm(v,p):
     """
     return tf.math.pow(tf.reduce_sum(tf.math.pow(np.r_[v], p), axis=-1), 1/p)
 
+
+def plot_confusion_matrix(cm):
+
+    nc = cm.shape[0]
+
+    fig = plt.figure(figsize=(6+nc/5, 6+nc/5))
+    # Add a gridspec with two rows and two columns and a ratio of 1 to 4 between
+    # the size of the marginal axes and the main axes in both directions.
+    # Also adjust the subplot parameters for a square plot.
+    gs = fig.add_gridspec(2, 2,  width_ratios=(6, 1), height_ratios=(1, 6),
+                          left=0.1, right=0.9, bottom=0.1, top=0.9,
+                          wspace=0.05, hspace=0.05)
+    # Create the Axes.
+    ax = fig.add_subplot(gs[1, 0])
+    ax_histx = fig.add_subplot(gs[0, 0], sharex=ax)
+    ax_histy = fig.add_subplot(gs[1, 1], sharey=ax)
+
+
+    sns.heatmap(cm/(np.sum(cm, axis=1).reshape(-1,1)+1e-10), fmt='.1%', annot=True, 
+                cmap='Blues', cbar=False, ax=ax,
+                annot_kws={"size": 6})
+    ax.set_xlabel("y_pred", fontdict = {'fontsize': 8})
+    ax.set_ylabel("y_true\n(rows add up to one)", fontdict = {'fontsize': 8})
+    ax.set_xticklabels(range(nc), fontdict = {'fontsize': 8})
+    ax.set_yticklabels(range(nc), fontdict = {'fontsize': 8})
+
+
+    y_pred_distrib = cm.sum(axis=0)/cm.sum()
+    y_true_distrib = cm.sum(axis=1)/cm.sum()
+    ax_histx.bar(np.arange(nc) + 0.5, y_pred_distrib, alpha=.5, color="steelblue")
+    ax_histx.set_title("y_pred class distribution")
+    ax_histx.title.set_fontsize(8)
+    ax_histx.grid()
+
+    xy_ticks = [0.2, 0.4, 0.6, 0.8]
+    ax_histx.set_yticks(xy_ticks)
+    ax_histx.set_yticklabels(xy_ticks, fontdict = {'fontsize': 8})
+    ax_histx.set_ylim(0,1)
+    for spine in ax_histx.spines.values():
+        spine.set_edgecolor('gray')
+    ax_histx.tick_params(axis='x', pad=0, direction='out', labelbottom=False)
+
+    ax_histy.barh(np.arange(nc) + 0.5, y_true_distrib, alpha=.5, color="steelblue")
+    ax_histy.set_ylabel("y_true class distribution", 
+                        rotation=270, labelpad=-60, 
+                        fontdict = {'fontsize': 8})
+    ax_histy.grid()
+    yx_ticks = [0.2, 0.4, 0.6, 0.8]
+    ax_histy.set_xticks(yx_ticks)
+    ax_histy.set_xticklabels(yx_ticks, fontdict = {'fontsize': 8}, rotation=270)
+    ax_histy.set_xlim(0,1)
+    for spine in ax_histy.spines.values():
+        spine.set_edgecolor('gray')
+    ax_histy.tick_params(axis='y', pad=0, direction='out', labelleft=False)
+
+    tmpfname = f"/tmp/{np.random.randint(1000000)}.png"
+    plt.savefig(tmpfname)
+    plt.close(fig)       
+    img = imread(tmpfname)
+    os.remove(tmpfname)
+    return img
+
 class ProportionsMetrics:
     """
     class containing methods for label proportions metrics and losses
     """
 
-    def __init__(self, class_weights, proportions_argmax=False, p_for_norm = 1, lambda_reg=0.0):
+    def __init__(self, class_weights_values, 
+                       mse_proportions_argmax=False, 
+                       kldiv_proportions_argmax=False, 
+                       mae_proportions_argmax=True,
+                       p_for_norm = 1, lambda_reg=0.0):
         """
         proportions_argmax: see get_y_pred_as_proportions
         """
-        self.class_weights = class_weights
-        self.number_of_classes = len(self.class_weights)
-        self.proportions_argmax = proportions_argmax
-        self.get_sorted_class_weights()
+        self.class_weights_values = np.r_[class_weights_values]
+        self.number_of_classes = len(self.class_weights_values)
+        self.mse_proportions_argmax = mse_proportions_argmax
+        self.mae_proportions_argmax = mae_proportions_argmax
+        self.kldiv_proportions_argmax = kldiv_proportions_argmax
         self.p_for_norm = p_for_norm
         self.lambda_reg = lambda_reg
 
         self.max_pnorm = tf.cast(pnorm(np.ones(self.number_of_classes) / self.number_of_classes, self.p_for_norm), tf.float32)
         
-    def get_sorted_class_weights(self):
-        """
-        separates class ids and class weights, normalizes weights and sorts by class_id
-        """
-        # normalize weights to sum up to 1
-        class_weights = {k:v/sum(self.class_weights.values()) for k,v in self.class_weights.items()}
-
-        # make sure class ids are ordered
-        self.class_ids = np.sort(list(class_weights.keys()))
-        self.class_w   = np.r_[[class_weights[i] for i in self.class_ids]]       
-
-        # sanity checks after code refactoring (should remove self.class_ids completly
-        # since we assume they are consecuive starting at zero)
-        if self.class_ids[0] != 0:
-            raise ValueError("there must be a class zero")
-
-        if not np.allclose(self.class_ids, np.arange(self.number_of_classes)):
-            raise ValueError("class_ids must be consecutive starting at zero")
 
     def generate_y_true(self, batch_size, pixel_size=96, max_samples=5):
         """
         generate a sample of label masks of shape batch_size x pixel_size x pixel_size
-        each pixel being an integer value in self.class_ids
+        each pixel being an integer value in [0 .. number_of_classes]
         returns a numpy array
         """
-        y_true = np.ones((batch_size,pixel_size,pixel_size))
-        y_true = y_true * self.class_ids[0]
+        y_true = np.zeros((batch_size,pixel_size,pixel_size))
         for i in range(batch_size):
-            for j, class_id in enumerate(self.class_ids[1:]):
+            for class_id in range(1,self.number_of_classes):
                 for _ in range(np.random.randint(max_samples-j)+1):
                     size = np.random.randint(30)+10
                     x,y = np.random.randint(y_true.shape[1]-size, size=2)
@@ -186,7 +251,7 @@ class ProportionsMetrics:
 
     def generate_y_pred(self, batch_size, pixel_size=96, max_samples=5, noise=2):
         """
-        generate a sample of probability predictions of shape [batch_size, pixel_size, pixel_size, len(class_ids)]
+        generate a sample of probability predictions of shape [batch_size, pixel_size, pixel_size, number_of_classes]
         each pixel being a probability in [0,1] softmaxed so the each pixel probabilities add up to 1.
         returns a numpy array
         """        
@@ -194,8 +259,8 @@ class ProportionsMetrics:
         y_pred = np.zeros((batch_size, pixel_size, pixel_size, self.number_of_classes))
 
         # set classes
-        for i, class_id in enumerate(self.class_ids):
-            y_pred[:,:,:,i][y_true==class_id] = 1.
+        for class_id in range(self.number_of_classes):
+            y_pred[:,:,:,class_id][y_true==class_id] = 1.
 
         # add random noise    
         y_pred += np.random.random(y_pred.shape)*noise
@@ -204,51 +269,41 @@ class ProportionsMetrics:
         y_pred = np.exp(y_pred) / np.exp(y_pred).sum(axis=-1)[:,:,:,np.newaxis]
         return y_pred.astype(np.float32)
 
-    def get_class_proportions_on_masks(self, y_true, dense=True):
+    def get_class_proportions_on_masks(self, y_true):
         """
         obtains the class proportions in a label mask.
         y_true: int array of shape [batch_size, pixel_size, pixel_size]
-        if dense==True: returns an array [batch_size, len(class_ids)]
-        else          : returns an array [batch_size, number_of_classes]
+        returns an array [batch_size, number_of_classes]
         """
-        if dense:
-            return np.r_[[[np.mean(y_true[i]==class_id)  for class_id in self.class_ids] for i in range(len(y_true))]].astype(np.float32)
-        else:
-            return np.r_[[[np.mean(y_true[i]==class_id)  for class_id in range(self.number_of_classes)] for i in range(len(y_true))]].astype(np.float32)
+        return np.r_[[[np.mean(y_true[i]==class_id)  for class_id in range(self.number_of_classes)] for i in range(len(y_true))]].astype(np.float32)
 
     def get_class_proportions_on_probabilities(self, y_pred):
         """
         obtains the class proportions on probability predictions
-        y_pred: float array of shape [batch_size, pixel_size, pixel_size, len(class_ids)]
-        returns: a tf tensor of shape [batch_size, len(class_ids)]
+        y_pred: float array of shape [batch_size, pixel_size, pixel_size, number_of_classes]
+        returns: a tf tensor of shape [batch_size, number_of_classes]
         """
-        assert y_pred.shape[-1] == len(self.class_ids)
+        assert y_pred.shape[-1] == self.number_of_classes
         return tf.reduce_mean(y_pred, axis=[1,2])
-
-    def to_dense_proportions(self, proportions):
-        """
-        converts sparse proportions to dense
-        """
-        return tf.gather(proportions, self.class_ids, axis=1)
     
     def get_y_pred_as_masks(self, y_pred):
         """
         converts probability predictions to masks by selecting in each pixel the class with highest probability.
         """
-        assert y_pred.shape[-1] == len(self.class_ids)
+        assert y_pred.shape[-1] == self.number_of_classes
         y_pred_as_label = np.zeros(y_pred.shape[:-1]).astype(int)
         t = y_pred.argmax(axis=-1)
-        for i in range(len(self.class_ids)):
-            y_pred_as_label[t==i] = self.class_ids[i]
+        for i in range(self.number_of_classes):
+            y_pred_as_label[t==i] = i
         return y_pred_as_label
     
     def get_y_true_as_probabilities(self, y_true):
         """
         converts masks to probability predictions by setting prob=1 or 0
         """
-        r = np.zeros(list(y_true.shape) + [len(self.class_ids)])
-        for i,class_id in enumerate(self.class_ids):
-            r[:,:,:,i] = y_true==class_id
+        r = np.zeros(list(y_true.shape) + [self.number_of_classes])
+        for class_id in range(self.number_of_classes):
+            r[:,:,:,class_id] = y_true==class_id
         return r.astype(np.float32)
     
     
@@ -266,10 +321,10 @@ class ProportionsMetrics:
         returns: a tf tensor of shape [batch_size, number_of_classes]
                  if input has shape [batch_size, number_of_classes], the input is returned untouched
         """
-        assert (len(y_pred.shape)==4 or len(y_pred.shape)==2) and y_pred.shape[-1]==len(self.class_ids)
+        assert (len(y_pred.shape)==4 or len(y_pred.shape)==2) and y_pred.shape[-1]==self.number_of_classes
 
         if argmax is None:
-            argmax = self.proportions_argmax
+            argmax = False
 
         # compute the proportions on prediction
         if len(y_pred.shape)==4:
@@ -278,7 +333,7 @@ class ProportionsMetrics:
                 # compute proportions by selecting the class with highest assigned probability in each pixel
                 # and then computing the proportions of selected classes across each image.
                 # cannot use tf.argmax since it is not differentiable. this workaround substracts the max value
-                # of each pixel from all classes and compares to zero, to substitute argmax
+                # of each pixel from all classes and compares to zero using a sigmoid instead
                 y_pred_argmax = y_pred - tf.reduce_max(y_pred, axis=-1, keepdims=True)
                 y_pred_argmax = tf.sigmoid( (y_pred_argmax*1e4 + 1)*1e1)
                 r = tf.reduce_mean(y_pred_argmax, axis=[1,2])
@@ -287,19 +342,18 @@ class ProportionsMetrics:
                 # compute the proportions by averaging each class. Softmax output guarantees all will add up to one.
                 r = tf.reduce_mean(y_pred, axis=[1,2])
         else:
-            # if we already have a probabilities vector return it as such
+            # if we already have a probabilities vector, return it as such
             r = y_pred
 
         return r        
 
 
-    def multiclass_proportions_mse(self, true_proportions, y_pred, argmax=None):
+    def multiclass_proportions_mse(self, true_proportions, y_pred):
         """
         computes the mse between proportions on probability predictions (y_pred)
         and target_proportions, using the class_weights in this instance.
         
         y_pred:  see y_pred in get_y_pred_as_proportions
-        argmax: see get_y_pred_as_proportions
 
         returns: a float with mse.
         """
@@ -307,7 +361,7 @@ class ProportionsMetrics:
         assert len(true_proportions.shape)==2 and true_proportions.shape[-1]==self.number_of_classes
 
         # compute the proportions on prediction
-        proportions_y_pred = self.get_y_pred_as_proportions(y_pred, argmax)
+        proportions_y_pred = self.get_y_pred_as_proportions(y_pred, argmax = self.mse_proportions_argmax)
 
         # regularization promoting sparsity. divide by max_pnorm to ensure value in [0,1]
         reg = tf.reduce_mean(
@@ -317,19 +371,43 @@ class ProportionsMetrics:
         # compute mse using class weights
         r = tf.reduce_mean(
                 tf.reduce_sum(
-                    (true_proportions - proportions_y_pred)**2 * self.class_w, 
+                    (true_proportions - proportions_y_pred)**2 * self.class_weights_values, 
                     axis=-1
                 )
         )
         return r + reg
+
+
+    def kldiv(self, true_proportions, y_pred):
+        """
+        computes the kl divergence between two proportions of labels
+        y_pred:  see y_pred in get_y_pred_as_proportions
+
+        returns: a float .
+        """
+
+        assert len(true_proportions.shape)==2 and true_proportions.shape[-1]==self.number_of_classes
+
+        # compute the proportions on prediction
+        proportions_y_pred = self.get_y_pred_as_proportions(y_pred, argmax = self.kldiv_proportions_argmax)
+        # compute mse using class weights
+        r = tf.reduce_mean(
+                tf.reduce_sum(
+                    true_proportions \
+                    * (tf.math.log(true_proportions + 1e-5) - tf.math.log(proportions_y_pred + 1e-5)) \
+                    * self.class_weights_values, 
+                    
+                    axis=-1
+                )
+        )
+        return r        
         
-    def multiclass_proportions_mae(self, true_proportions, y_pred, argmax=None, perclass=False):
+    def multiclass_proportions_mae(self, true_proportions, y_pred, perclass=False):
         """
         computes the mae between proportions on probability predictions (y_pred)
         and target_proportions. NO CLASS WEIGHTS ARE USED.
 
         y_pred: see y_pred in get_y_pred_as_proportions
-        argmax: see get_y_pred_as_proportions
         perclass: if true returns a vector of length num_classes with the mae on each class
 
         returns: a float with mse if perclass=False, otherwise a vector
@@ -338,7 +416,7 @@ class ProportionsMetrics:
         assert len(true_proportions.shape)==2 and true_proportions.shape[-1]==self.number_of_classes
 
         # compute the proportions on prediction
-        proportions_y_pred = self.get_y_pred_as_proportions(y_pred, argmax)
+        proportions_y_pred = self.get_y_pred_as_proportions(y_pred, argmax = self.mae_proportions_argmax)
 
         # compute mae per class
         r = tf.reduce_mean(
@@ -360,14 +438,14 @@ class ProportionsMetrics:
          Malkin, Kolya, et al. "Label super-resolution networks." 
          International Conference on Learning Representations. 2018
 
-        y_pred: a tf tensor of shape [batch_size, pixel_size, pixel_size, len(class_ids)] with probability predictions
+        y_pred: a tf tensor of shape [batch_size, pixel_size, pixel_size, number_of_classes] with probability predictions
         target_proportions: a tf tensor of shape [batch_size, number_of_classes]
         
         
         returns: a float with the loss.
         """
 
-        assert len(y_pred.shape)==4 and y_pred.shape[-1]==len(self.class_ids)
+        assert len(y_pred.shape)==4 and y_pred.shape[-1]==self.number_of_classes
         assert len(true_proportions.shape)==2 and true_proportions.shape[-1]==self.number_of_classes
         
         eta = true_proportions
@@ -390,18 +468,18 @@ class ProportionsMetrics:
         )
         return loss
 
-    def multiclass_proportions_mae_on_chip(self, y_true, y_pred, argmax=None, perclass=False):
+    def multiclass_proportions_mae_on_chip(self, y_true, y_pred, perclass=False):
         """
         computes the mse between the proportions observed in a prediction wrt to a mask
-        y_pred: a tf tensor of shape [batch_size, pixel_size, pixel_size, len(class_ids)] with probability predictions
+        y_pred: a tf tensor of shape [batch_size, pixel_size, pixel_size, number_of_classes] with probability predictions
         y_true: int array of shape [batch_size, pixel_size, pixel_size]
         perclass: see multiclass_proportions_mae
         argmax: see multiclass_proportions_mae
 
         returns: a float with mse
         """
-        p_true = self.get_class_proportions_on_masks(y_true, dense=False)
-        return self.multiclass_proportions_mae(p_true, y_pred, argmax=argmax, perclass=perclass)
+        p_true = self.get_class_proportions_on_masks(y_true)
+        return self.multiclass_proportions_mae(p_true, y_pred, perclass=perclass)
     
     def compute_iou(self, y_true, y_pred):
         """
@@ -420,12 +498,11 @@ class ProportionsMetrics:
         itemclass_iou = []
         itemclass_true_or_pred_ones = []
         y_pred = tf.argmax(y_pred, axis=-1)
-        for i in range(self.number_of_classes):
-            class_id = self.class_ids[i]
+        for class_id in range(self.number_of_classes):
             y_true_ones  = tf.cast(y_true==class_id, tf.float32) 
-            y_pred_ones  = tf.cast(y_pred==i, tf.float32)
+            y_pred_ones  = tf.cast(y_pred==class_id, tf.float32)
             y_true_zeros = tf.cast(y_true!=class_id, tf.float32) 
-            y_pred_zeros = tf.cast(y_pred!=i, tf.float32)
+            y_pred_zeros = tf.cast(y_pred!=class_id, tf.float32)
 
             tp = tf.reduce_sum(y_true_ones  * y_pred_ones, axis=[1,2])
             fp = tf.reduce_sum(y_true_zeros * y_pred_ones, axis=[1,2])
@@ -449,47 +526,11 @@ class ProportionsMetrics:
 
         return tf.reduce_mean(per_item_iou)   
 
-    def compute_accuracy(self, y_true, y_pred):
-        """
-        accuracy is computed by summing up the true positives of each class present in the y_true
-        and dividing by the total number of pixels. NO CLASS WEIGHTS ARE USED
-        
-        formally:
-        Li: number of total pixels in y_true belonging to class i
-        Pi: number of class i pixels in y_true correctly predicted in y_pred (true positives)
-                  
-           acc =  (sum_i Pi)/ (sum_i Li)
-        
-        """
-        # resize smallest
-        if y_true.shape[-1]<y_pred.shape[-1]:
-            y_true = tf.image.resize(y_true[..., tf.newaxis], y_pred.shape[1:], method='nearest')[:,:,:,0]
-
-        if y_pred.shape[-1]<y_true.shape[-1]:
-            y_pred = tf.image.resize(y_pred, y_true.shape[1:], method='nearest')
-        
-        # choose class with highest probability for prediction
-        y_pred = tf.argmax(y_pred, axis=-1)
-
-        # compute accuracy per class
-        hits = []
-        total_pixels = []
-        for i, class_id in enumerate(self.class_ids):
-            y_true_ones = tf.cast(y_true==class_id, tf.float32)
-            y_pred_ones = tf.cast(y_pred==i, tf.float32)
-            nb_pixels_correct  = tf.reduce_sum( y_true_ones * y_pred_ones ) 
-            nb_pixels_in_class = tf.reduce_sum( y_true_ones )  
-            hits.append(nb_pixels_correct)
-            total_pixels.append(nb_pixels_in_class)
-
-        accuracy = tf.reduce_sum(hits) / tf.reduce_sum(total_pixels)
-        return accuracy
-
     def show_y_pred(self, y_pred):
         for n in range(len(y_pred)):
             for ax,i in subplots(self.number_of_classes, usizex=4):
                 plt.imshow(y_pred[n,:,:,i]>=0.5)
-                plt.title(f"item {n}, class {self.class_ids[i]}, m {np.mean(y_pred[n,:,:,i]>=0.5):.3f}")
+                plt.title(f"item {n}, class {i}, m {np.mean(y_pred[n,:,:,i]>=0.5):.3f}")
                 plt.colorbar();
 
     def show_y_true(self, y_true):

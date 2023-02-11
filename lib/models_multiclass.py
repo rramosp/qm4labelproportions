@@ -15,9 +15,14 @@ from . import data
 from . import metrics
 from rlxutils import subplots
 import segmentation_models as sm
+import seaborn as sns
 import pandas as pd
 import gc
 import os
+
+# run unit tests on metrics
+from .tests import testmetrics
+testmetrics.run()
 
 
 def get_next_file_path(path, base_name, ext):
@@ -28,16 +33,6 @@ def get_next_file_path(path, base_name, ext):
         if not os.path.exists(file_path):
             return file_path
         i += 1
-
-def get_sorted_class_weights(class_weights):
-    # normalize weights to sum up to 1
-    class_weights = {k:v/sum(class_weights.values()) for k,v in class_weights.items()}
-
-    # make sure class ids are ordered
-    class_ids = np.sort(list(class_weights.keys()))
-    class_w   = np.r_[[class_weights[i] for i in class_ids]]       
-
-    return class_ids, class_w
 
 class GenericUnet:
 
@@ -54,10 +49,11 @@ class GenericUnet:
             "batch_size":self.tr.batch_size,
             'trainable_params':self.trainable_params,
             'non_trainable_params':self.non_trainable_params,
-            'class_weights':self.class_weights,
+            'class_weights':{str(k):v for k,v in self.class_weights.items()},
             'loss': self.loss_name,
             'partitions_id':self.partitions_id
         }
+        wconfig.update(self.metrics_args)
         return wconfig
 
 
@@ -124,7 +120,8 @@ class GenericUnet:
                  n_batches_online_val = np.inf,
                  n_val_samples = 10,
                  log_imgs = False,
-                 log_perclass = False
+                 log_perclass = False,
+                 log_confusion_matrix = False
                 ):
 
         print (f"initializing {self.get_name()}")
@@ -134,6 +131,7 @@ class GenericUnet:
 
         self.log_imgs = log_imgs
         self.log_perclass = log_perclass
+        self.log_confusion_matrix = log_confusion_matrix
         self.partitions_id = data_generator_split_args['partitions_id']
         self.learning_rate = learning_rate
         self.loss_name = loss
@@ -149,32 +147,32 @@ class GenericUnet:
         if not os.path.exists(outdir):
             os.makedirs(outdir)
 
-        if class_weights is None:
-            selected_classids = None
+        if self.class_weights is None:
+            data_generator_split_args['class_groups'] = None
         else:
-            # if class weights was specified, it could have a selection of classes
-            # which will be mapped to 0..number_of_selected_classes
-            if not 0 in class_weights.keys():
-                class_weights[0] = 0
-            selected_classids = sorted(class_weights.keys())
-            self.original_class_weights = class_weights
-            self.class_weights = {i:class_weights[k] for i,k in enumerate(selected_classids)}
+            self.class_weights = {k:v/sum(self.class_weights.values()) for k,v in self.class_weights.items()}
+            data_generator_split_args['class_groups'] = [i for i in self.class_weights.keys() if i!=0]
 
-        data_generator_split_args['selected_classids'] = selected_classids
         self.tr, self.ts, self.val = data_generator_split_method(**data_generator_split_args)
 
         self.number_of_classes = self.tr.number_of_output_classes
 
-        # if there are no classweights, ditribute class weights evently across all classes
+        # if there are no classweights, distribute class weights evently across all classes
         if self.class_weights is None:
             n = self.number_of_classes
             self.class_weights = {i: 1/n for i in range(n)}
+
+        self.class_weights_values = list(self.class_weights.values())
+        
+        # if no zero in class weights set its weight to zero
+        if not 0 in self.class_weights.keys():
+            self.class_weights_values = [0] + self.class_weights_values    
 
         self.run_name = f"{self.get_name()}-{self.partitions_id}-{self.loss_name}-{datetime.now().strftime('%Y%m%d[%H%M]')}"
         self.train_model, self.val_model = self.get_models()
         self.opt = tf.keras.optimizers.Adam(learning_rate = self.learning_rate)
 
-        self.metrics = metrics.ProportionsMetrics(class_weights = self.class_weights, **self.metrics_args)
+        self.metrics = metrics.ProportionsMetrics(class_weights_values = self.class_weights_values, **self.metrics_args)
 
         if file_run_id is None:
             self.init_model_params()
@@ -190,10 +188,6 @@ class GenericUnet:
             self.run_id = file_run_id
             run_file_path = os.path.join(self.outdir, self.run_id + ".h5")            
             self.train_model.load_weights(run_file_path)
-
-        self.classification_metrics = metrics.ClassificationMetrics(
-            number_of_classes=self.number_of_classes
-        )
 
         return self
 
@@ -236,7 +230,8 @@ class GenericUnet:
         n = len(val_x)
         
         tval_out = np.argmax(val_out, axis=-1)
-        cmap=matplotlib.colors.ListedColormap([plt.cm.tab20(i) for i in range(self.number_of_classes)])
+        cmap=matplotlib.colors.ListedColormap([plt.cm.gist_ncar(i/self.number_of_classes) \
+                                                for i in range(self.number_of_classes)])
 
         n_rows = 4 if self.produces_pixel_predictions() else 3
         for ax, ti in subplots(range(n*n_rows), n_cols=n, usizex=3.5):
@@ -258,9 +253,10 @@ class GenericUnet:
                 cbar.ax.set_yticklabels([f"{i}" for i in range(self.number_of_classes)])  # vertically oriented colorbar
                     
             if row==2 and self.produces_pixel_predictions():
-                self.classification_metrics.reset_state()
-                self.classification_metrics.update_state(val_l[i:i+1], val_out[i:i+1])
-                f1 = self.classification_metrics.result('f1', 'micro')
+                cmetrics = metrics.PixelClassificationMetrics(number_of_classes=self.number_of_classes)
+                cmetrics.reset_state()
+                cmetrics.update_state(val_l[i:i+1], val_out[i:i+1])
+                f1 = cmetrics.result('f1', 'micro')
                 iou = self.metrics.compute_iou(val_l[i:i+1], val_out[i:i+1])
                 
                 title = f"onchip f1 {f1:.3f} iou {iou:.3f}"
@@ -313,8 +309,13 @@ class GenericUnet:
     def get_loss(self, out, p, l): 
         if self.loss_name in ['multiclass_proportions_mse', 'mse']:
             return self.metrics.multiclass_proportions_mse(p, out)
+
+        if self.loss_name in ['kldiv']:
+            return self.metrics.kldiv(p, out)
+
         if self.loss_name in ['multiclass_LSRN_loss', 'lsrn']:
             return self.metrics.multiclass_LSRN_loss(p, out)
+        
         raise ValueError(f"unkown loss '{self.loss_name}'")
 
     def predict(self, x):
@@ -349,7 +350,8 @@ class GenericUnet:
             # measure stuff on validation for reporting
             losses, ious, maeps, maeps_perclass = [], [], [], []
             max_value = np.min([len(self.val),self.n_batches_online_val ]).astype(int)
-            self.classification_metrics.reset_state()
+            self.val_classification_metrics = metrics.PixelClassificationMetrics(number_of_classes=self.number_of_classes)
+            self.val_classification_metrics.reset_state()
             for i, (x, (p,l)) in pbar(enumerate(self.val), max_value=max_value):
                 if i>=self.n_batches_online_val:
                     break
@@ -362,34 +364,46 @@ class GenericUnet:
                 if self.produces_pixel_predictions():
                     ious.append(self.metrics.compute_iou(l,out))
 
-                self.classification_metrics.update_state(l,out)
+                self.val_classification_metrics.update_state(l,out)
                     
             # summarize validation stuff
             val_loss = np.mean(losses)
             val_mean_mae = np.mean(maeps)
             txt_metrics = f"mae {val_mean_mae:.5f}"
             if self.produces_pixel_predictions():
-                val_mean_f1 = np.mean(self.classification_metrics.result('f1', 'micro'))
+                val_mean_f1 = np.mean(self.val_classification_metrics.result('f1', 'micro'))
                 val_mean_iou = np.mean(ious)
                 txt_metrics += f" f1 {val_mean_f1:.5f} iou {val_mean_iou:.5f}"
-                
-            # save model if better val loss
-            if val_loss < min_val_loss:
-                min_val_loss = val_loss
-                self.train_model.save_weights(run_file_path)
                 
             # assemble per class metrics
             r = {'loss': np.mean(losses), 'maeprops_on_chip::global': np.mean(maeps)}
             r.update({f'maeprops_on_chip::class_{k}':v for k,v in zip(range(0, self.number_of_classes), np.r_[maeps_perclass].mean(axis=0))})
 
             if self.produces_pixel_predictions(): 
-                r['f1::global']  = self.classification_metrics.result('f1', 'micro').numpy()
+                r['f1::global']  = self.val_classification_metrics.result('f1', 'micro').numpy()
                 r['iou::global'] = np.mean(ious)
-                r.update({f'f1::class_{k}':tf.constant(v).numpy() for k,v in self.classification_metrics.result('f1', 'per_class').items()})
-                r.update({f'iou::class_{k}':tf.constant(v).numpy() for k,v in self.classification_metrics.result('iou', 'per_class').items()})
+                r.update({f'f1::class_{k}':tf.constant(v).numpy() for k,v in self.val_classification_metrics.result('f1', 'per_class').items()})
+                r.update({f'iou::class_{k}':tf.constant(v).numpy() for k,v in self.val_classification_metrics.result('iou', 'per_class').items()})
 
             df_perclass = pd.DataFrame([{k:v for k,v in r.items() if 'global' not in k and k!='loss'}], index=["val"]).T
 
+
+
+            # save model and log images if better val loss
+            if val_loss < min_val_loss:
+                min_val_loss = val_loss
+                self.train_model.save_weights(run_file_path)
+
+                if self.wandb_project is not None:
+                    if self.log_imgs:
+                        log_dict['val/sample'] = self.plot_val_sample(self.n_val_samples, return_fig=True)
+                    if self.log_confusion_matrix:
+                        img = metrics.plot_confusion_matrix(self.val_classification_metrics.cm)
+                        log_dict['val/confusion_matrix'] = wandb.Image(img, caption="confusion matrix")
+                    if self.log_perclass:
+                        log_dict['val/perclass'] = \
+                            wandb.Table(columns = ['metric', 'val'], 
+                                        data=[[i,j[0]] for i,j in zip (df_perclass.index, df_perclass.values)])    
 
             # log to wandb
             if self.wandb_project is not None:
@@ -398,12 +412,9 @@ class GenericUnet:
                     log_dict["val/f1"] = val_mean_f1
                     log_dict["val/iou"] = val_mean_iou
                 log_dict["val/maeprops_on_chip"] = val_mean_mae
-                if self.log_imgs:
-                    log_dict['val/sample'] = self.plot_val_sample(self.n_val_samples, return_fig=True)
-                if self.log_perclass:
-                    log_dict['val/perclass'] = wandb.Html(df_perclass.to_html())
+         
                 wandb.log(log_dict)
-
+                
             # log to screen
             print (f"epoch {epoch:3d}, train loss {tr_loss:.5f}", flush=True)
             print (f"epoch {epoch:3d},   val loss {val_loss:.5f} {txt_metrics}", flush=True)
@@ -420,14 +431,15 @@ class GenericUnet:
 
         losses, maeps, ious = [], [], []
         mae_perclass = []
-        self.classification_metrics.reset_state()
+        self.summary_classification_metrics = metrics.PixelClassificationMetrics(number_of_classes=self.number_of_classes)
+        self.summary_classification_metrics.reset_state()
         for x, (p,l) in pbar(dataset):
             x,l = self.normitem(x,l)
             out = self.predict(x)
             if self.produces_pixel_predictions():
                 iou = self.metrics.compute_iou(l, out)
                 ious.append(iou)
-                self.classification_metrics.update_state(l, out)
+                self.summary_classification_metrics.update_state(l, out)
                 
             losses.append(self.get_loss(out,p,l).numpy())
             maeps.append(self.metrics.multiclass_proportions_mae_on_chip(l, out).numpy())
@@ -437,10 +449,10 @@ class GenericUnet:
         r.update({f'maeprops_on_chip::class_{k}':v for k,v in zip(range(0, self.number_of_classes), np.r_[mae_perclass].mean(axis=0))})
 
         if self.produces_pixel_predictions(): 
-            r['f1::global']  = self.classification_metrics.result('f1', 'micro').numpy()
+            r['f1::global']  = self.summary_classification_metrics.result('f1', 'micro').numpy()
             r['iou::global'] = np.mean(ious)
-            r.update({f'f1::class_{k}':tf.constant(v).numpy() for k,v in self.classification_metrics.result('f1', 'per_class').items()})
-            r.update({f'iou::class_{k}':tf.constant(v).numpy() for k,v in self.classification_metrics.result('iou', 'per_class').items()})
+            r.update({f'f1::class_{k}':tf.constant(v).numpy() for k,v in self.summary_classification_metrics.result('f1', 'per_class').items()})
+            r.update({f'iou::class_{k}':tf.constant(v).numpy() for k,v in self.summary_classification_metrics.result('iou', 'per_class').items()})
 
         return r
     
@@ -461,14 +473,24 @@ class GenericUnet:
 
 class CustomUnetSegmentation(GenericUnet):
 
-    def __init__(self, initializer='he_normal', input_shape=(96,96,3)):
+    def __init__(self, nlayers = 5, 
+                       activation = 'relu', 
+                       initializer='he_normal', 
+                       dropout = 0.1,
+                       input_shape=(96,96,3)):
         self.initializer = initializer    
         self.input_shape = input_shape
-    
+        self.nlayers = nlayers
+        self.activation = activation
+        self.dropout = np.min([dropout, 0.9])
+
     def get_wandb_config(self):
         wconfig = super().get_wandb_config()
         wconfig['initializer'] = self.initializer
         wconfig['input_shape'] = self.input_shape
+        wconfig['dropout'] = self.dropout
+        wconfig['activation'] = self.activation
+        wconfig['nlayers'] = self.nlayers
         return wconfig
 
     def __get_name__(self):
@@ -476,57 +498,68 @@ class CustomUnetSegmentation(GenericUnet):
 
     def get_models(self):
         input_shape=self.input_shape
+        act = self.activation
         # Build U-Net model
         inputs = Input(input_shape)
-        s = Lambda(lambda x: x / 255) (inputs)
 
-        c1 = Conv2D(16, (3, 3), activation='elu', kernel_initializer=self.initializer, padding='same') (s)
-        c1 = Dropout(0.1) (c1)
-        c1 = Conv2D(16, (3, 3), activation='elu', kernel_initializer=self.initializer, padding='same') (c1)
+        c1 = Conv2D(16, (3, 3), activation=act, kernel_initializer=self.initializer, padding='same') (inputs)
+        c1 = Dropout(self.dropout) (c1)
+        c1 = Conv2D(16, (3, 3), activation=act, kernel_initializer=self.initializer, padding='same') (c1)
         p1 = MaxPooling2D((2, 2)) (c1)
+        u9_input = p1
 
-        c2 = Conv2D(32, (3, 3), activation='elu', kernel_initializer=self.initializer, padding='same') (p1)
-        c2 = Dropout(0.1) (c2)
-        c2 = Conv2D(32, (3, 3), activation='elu', kernel_initializer=self.initializer, padding='same') (c2)
-        p2 = MaxPooling2D((2, 2)) (c2)
+        if self.nlayers>=2:
+            c2 = Conv2D(32, (3, 3), activation=act, kernel_initializer=self.initializer, padding='same') (p1)
+            c2 = Dropout(self.dropout) (c2)
+            c2 = Conv2D(32, (3, 3), activation=act, kernel_initializer=self.initializer, padding='same') (c2)
+            p2 = MaxPooling2D((2, 2)) (c2)
+            u9_input = c2
 
-        c3 = Conv2D(64, (3, 3), activation='elu', kernel_initializer=self.initializer, padding='same') (p2)
-        c3 = Dropout(0.2) (c3)
-        c3 = Conv2D(64, (3, 3), activation='elu', kernel_initializer=self.initializer, padding='same') (c3)
-        p3 = MaxPooling2D((2, 2)) (c3)
+            if self.nlayers>=3:
+                c3 = Conv2D(64, (3, 3), activation=act, kernel_initializer=self.initializer, padding='same') (p2)
+                c3 = Dropout(np.min([2*self.dropout, 0.9])) (c3)
+                c3 = Conv2D(64, (3, 3), activation=act, kernel_initializer=self.initializer, padding='same') (c3)
+                p3 = MaxPooling2D((2, 2)) (c3)
+                u8_input = c3
 
-        c4 = Conv2D(128, (3, 3), activation='elu', kernel_initializer=self.initializer, padding='same') (p3)
-        c4 = Dropout(0.2) (c4)
-        c4 = Conv2D(128, (3, 3), activation='elu', kernel_initializer=self.initializer, padding='same') (c4)
-        p4 = MaxPooling2D(pool_size=(2, 2)) (c4)
+                if self.nlayers >= 4:
+                    c4 = Conv2D(128, (3, 3), activation=act, kernel_initializer=self.initializer, padding='same') (p3)
+                    c4 = Dropout(np.min([2*self.dropout, 0.9])) (c4)
+                    c4 = Conv2D(128, (3, 3), activation=act, kernel_initializer=self.initializer, padding='same') (c4)
+                    p4 = MaxPooling2D(pool_size=(2, 2)) (c4)
+                    u7_input = c4
 
-        c5 = Conv2D(256, (3, 3), activation='elu', kernel_initializer=self.initializer, padding='same') (p4)
-        c5 = Dropout(0.3) (c5)
-        c5 = Conv2D(256, (3, 3), activation='elu', kernel_initializer=self.initializer, padding='same') (c5)
+                    if self.nlayers >= 5:
+                        c5 = Conv2D(256, (3, 3), activation=act, kernel_initializer=self.initializer, padding='same') (p4)
+                        c5 = Dropout(np.max([3*self.dropout, 0.9])) (c5)
+                        c5 = Conv2D(256, (3, 3), activation=act, kernel_initializer=self.initializer, padding='same') (c5)
 
-        u6 = Conv2DTranspose(128, (2, 2), strides=(2, 2), padding='same') (c5)
-        u6 = concatenate([u6, c4])
-        c6 = Conv2D(128, (3, 3), activation='elu', kernel_initializer=self.initializer, padding='same') (u6)
-        c6 = Dropout(0.2) (c6)
-        c6 = Conv2D(128, (3, 3), activation='elu', kernel_initializer=self.initializer, padding='same') (c6)
+                        u6 = Conv2DTranspose(128, (2, 2), strides=(2, 2), padding='same') (c5)
+                        u6 = concatenate([u6, c4])
+                        c6 = Conv2D(128, (3, 3), activation=act, kernel_initializer=self.initializer, padding='same') (u6)
+                        c6 = Dropout(np.min([2*self.dropout, 0.9])) (c6)
+                        c6 = Conv2D(128, (3, 3), activation=act, kernel_initializer=self.initializer, padding='same') (c6)
+                        u7_input = c6
 
-        u7 = Conv2DTranspose(64, (2, 2), strides=(2, 2), padding='same') (c6)
-        u7 = concatenate([u7, c3])
-        c7 = Conv2D(64, (3, 3), activation='elu', kernel_initializer=self.initializer, padding='same') (u7)
-        c7 = Dropout(0.2) (c7)
-        c7 = Conv2D(64, (3, 3), activation='elu', kernel_initializer=self.initializer, padding='same') (c7)
+                    u7 = Conv2DTranspose(64, (2, 2), strides=(2, 2), padding='same') (u7_input)
+                    u7 = concatenate([u7, c3])
+                    c7 = Conv2D(64, (3, 3), activation=act, kernel_initializer=self.initializer, padding='same') (u7)
+                    c7 = Dropout(np.min([2*self.dropout, 0.9])) (c7)
+                    c7 = Conv2D(64, (3, 3), activation=act, kernel_initializer=self.initializer, padding='same') (c7)
+                    u8_input = c7
 
-        u8 = Conv2DTranspose(32, (2, 2), strides=(2, 2), padding='same') (c7)
-        u8 = concatenate([u8, c2])
-        c8 = Conv2D(32, (3, 3), activation='elu', kernel_initializer=self.initializer, padding='same') (u8)
-        c8 = Dropout(0.1) (c8)
-        c8 = Conv2D(32, (3, 3), activation='elu', kernel_initializer=self.initializer, padding='same') (c8)
+                u8 = Conv2DTranspose(32, (2, 2), strides=(2, 2), padding='same') (u8_input)
+                u8 = concatenate([u8, c2])
+                c8 = Conv2D(32, (3, 3), activation=act, kernel_initializer=self.initializer, padding='same') (u8)
+                c8 = Dropout(self.dropout) (c8)
+                c8 = Conv2D(32, (3, 3), activation=act, kernel_initializer=self.initializer, padding='same') (c8)
+                u9_input = c8
 
-        u9 = Conv2DTranspose(16, (2, 2), strides=(2, 2), padding='same') (c8)
+        u9 = Conv2DTranspose(16, (2, 2), strides=(2, 2), padding='same') (u9_input)
         u9 = concatenate([u9, c1], axis=3)
-        c9 = Conv2D(16, (3, 3), activation='elu', kernel_initializer=self.initializer, padding='same') (u9)
-        c9 = Dropout(0.1) (c9)
-        c9 = Conv2D(16, (3, 3), activation='elu', kernel_initializer=self.initializer, padding='same') (c9)
+        c9 = Conv2D(16, (3, 3), activation=act, kernel_initializer=self.initializer, padding='same') (u9)
+        c9 = Dropout(self.dropout) (c9)
+        c9 = Conv2D(16, (3, 3), activation=act, kernel_initializer=self.initializer, padding='same') (c9)
 
         outputs = Conv2D(self.number_of_classes, (1, 1), activation='softmax') (c9)
 
@@ -627,7 +660,7 @@ class PatchProportionsRegression(GenericUnet):
         # Label proportions prediction layer
         probs = tf.keras.layers.Dense(self.number_of_classes, activation=self.activation)(x)
         out   = tf.reshape(probs, [-1, patch_extr.num_patches, patch_extr.num_patches, self.number_of_classes])
-
+        
         m = tf.keras.models.Model([inputs], [out])
         return m, m
 
@@ -640,12 +673,14 @@ class PatchClassifierSegmentation(GenericUnet):
                      patch_size, 
                      pred_strides,
                      num_units,
-                     dropout_rate):
+                     dropout_rate,
+                     convolve_transpose_output = False):
         self.input_shape = input_shape
         self.patch_size = patch_size 
         self.pred_strides = pred_strides
         self.num_units = num_units
         self.dropout_rate = dropout_rate
+        self.convolve_transpose_output = convolve_transpose_output
 
     def get_wandb_config(self):
         w = super().get_wandb_config()
@@ -667,27 +702,19 @@ class PatchClassifierSegmentation(GenericUnet):
         x = tf.keras.layers.Dropout(rate=self.dropout_rate)(x)
         # Label proportions prediction layer
         probs = tf.keras.layers.Dense(self.number_of_classes, activation="softmax")(x)
-        # Construct image from label proportions
-        conv2dt = tf.keras.layers.Conv2DTranspose(filters=self.number_of_classes,
-                        kernel_size=self.patch_size,
-                        strides=self.pred_strides,
-                        trainable=True,
-                        activation='softmax')
         probs = tf.reshape(probs, [-1, patch_extr.num_patches, patch_extr.num_patches, self.number_of_classes])
-        out = conv2dt(probs)
+        out = probs
+        # Construct image from label proportions
+        if self.convolve_transpose_output:
+            conv2dt = tf.keras.layers.Conv2DTranspose(filters=self.number_of_classes,
+                            kernel_size=self.patch_size,
+                            strides=self.pred_strides,
+                            trainable=True,
+                            activation='softmax')
+            out = conv2dt(out)
         m = tf.keras.models.Model([inputs], [out])
         return m, m
 
-        # conv2dt = tf.keras.layers.Conv2DTranspose(filters=len(self.class_weights),
-        #                 kernel_size=self.patch_size,
-        #                 strides=self.pred_strides,
-        #                 kernel_initializer=tf.keras.initializers.Ones(),
-        #                 bias_initializer=tf.keras.initializers.Zeros(),
-        #                 trainable=False)        
-        #ones = tf.ones_like(probs)
-        #out = conv2dt(probs) / conv2dt(ones)
-        #m = tf.keras.models.Model([inputs], [out])
-        #return m
 
     def __get_name__(self):
         return f"patch_classifier_segm"
