@@ -113,7 +113,7 @@ def run_experiment(data_generator_split_method,
                    log_confusion_matrix = False,
                    metrics_args = {},
                    wandb_tags = [],
-                   learning_rate_scheduler_fn = None,
+                   learning_rate_scheduler = None,
                    learning_rate_scheduler_kwargs = None
                    ):
     print ("\n---------", data_generator_split_args['partitions_id'], "------------")
@@ -135,7 +135,7 @@ def run_experiment(data_generator_split_method,
                  log_imgs = log_imgs,
                  log_confusion_matrix = log_confusion_matrix,
                  metrics_args = metrics_args,
-                 learning_rate_scheduler_fn = learning_rate_scheduler_fn,
+                 learning_rate_scheduler = learning_rate_scheduler,
                  learning_rate_scheduler_kwargs = learning_rate_scheduler_kwargs 
                  )
     if wproject is not None:

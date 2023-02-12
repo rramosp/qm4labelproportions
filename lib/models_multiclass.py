@@ -34,18 +34,39 @@ def get_next_file_path(path, base_name, ext):
             return file_path
         i += 1
 
-def scheduler_exp_decay(epoch, lr, start_epoch=0, decay=1):
+def scheduler_exp_decay(epoch, lr, start_epoch=0, decay=1, min_lr=0):
     if epoch<start_epoch:
-        return lr
+        lr = lr
     else:
-        return lr * tf.math.exp(-decay*0.01)
+        lr = lr * tf.math.exp(-decay*0.01)
     
+    return min_lr if lr<min_lr else lr
 
 def scheduler_binary(epoch, lr, period, lr1, lr2):
     if (epoch//period)%2 == 0:
         return lr1
     else:
         return lr2
+    
+def scheduler_periodic(epoch, lr, period, lrset):
+    lr_index = (epoch//period)%len(lrset)
+    return lrset[lr_index]
+
+def plot_schedule(init_lr, epochs, learning_rate_scheduler, learning_rate_scheduler_kwargs):
+    lr = init_lr
+    lrs = [lr]
+    learning_rate_scheduler_fn = eval(learning_rate_scheduler)
+    for epoch in range(1, epochs):
+        lr = learning_rate_scheduler_fn(
+                                         epoch, lr, 
+                                         **learning_rate_scheduler_kwargs
+                                        )
+        lrs.append(lr)
+        
+    plt.plot(lrs)
+    plt.grid()
+    plt.xlabel("epoch")
+    plt.ylabel("learning rate")
 
 class GenericUnet:
 
@@ -68,11 +89,10 @@ class GenericUnet:
             'metrics_args': self.metrics_args
         }
         if self.learning_rate_scheduler_fn is not None:
-            wconfig['learning_rate_scheduler_fn'] = self.learning_rate_scheduler_fn
+            wconfig['learning_rate_scheduler'] = self.learning_rate_scheduler
             wconfig['learning_rate_scheduler_kwargs'] = self.learning_rate_scheduler_kwargs
 
         return wconfig
-
 
     @staticmethod
     def restore_init_from_file(
@@ -139,7 +159,7 @@ class GenericUnet:
                  log_imgs = False,
                  log_perclass = False,
                  log_confusion_matrix = False,
-                 learning_rate_scheduler_fn     = None,
+                 learning_rate_scheduler = None,
                  learning_rate_scheduler_kwargs = {}
                 ):
 
@@ -149,10 +169,8 @@ class GenericUnet:
                "'data_generator_split_args' must have 'partitions_id'"
 
         # usually a function name
-        if isinstance(learning_rate_scheduler_fn, str):
-            learning_rate_scheduler_fn = eval(learning_rate_scheduler_fn)
-
-        self.learning_rate_scheduler_fn = learning_rate_scheduler_fn
+        self.learning_rate_scheduler_fn = eval(learning_rate_scheduler)
+        self.learning_rate_scheduler = learning_rate_scheduler
         self.learning_rate_scheduler_kwargs = learning_rate_scheduler_kwargs
         self.log_imgs = log_imgs
         self.log_perclass = log_perclass
@@ -423,14 +441,13 @@ class GenericUnet:
 
             df_perclass = pd.DataFrame([{k:v for k,v in r.items() if 'global' not in k and k!='loss'}], index=["val"]).T
 
-
-
             # save model and log images if better val loss
             if val_loss < min_val_loss:
                 min_val_loss = val_loss
                 self.train_model.save_weights(run_file_path)
 
                 if self.wandb_project is not None:
+                    log_dict['val/min_loss'] = val_loss
                     if self.log_imgs:
                         log_dict['val/sample'] = self.plot_val_sample(self.n_val_samples, return_fig=True)
                     if self.log_confusion_matrix:
