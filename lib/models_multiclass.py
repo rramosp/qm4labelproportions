@@ -34,6 +34,40 @@ def get_next_file_path(path, base_name, ext):
             return file_path
         i += 1
 
+def scheduler_exp_decay(epoch, lr, start_epoch=0, decay=1, min_lr=0):
+    if epoch<start_epoch:
+        lr = lr
+    else:
+        lr = lr * tf.math.exp(-decay*0.01)
+    
+    return min_lr if lr<min_lr else lr
+
+def scheduler_binary(epoch, lr, period, lr1, lr2):
+    if (epoch//period)%2 == 0:
+        return lr1
+    else:
+        return lr2
+    
+def scheduler_periodic(epoch, lr, period, lrset):
+    lr_index = (epoch//period)%len(lrset)
+    return lrset[lr_index]
+
+def plot_schedule(init_lr, epochs, learning_rate_scheduler, learning_rate_scheduler_kwargs):
+    lr = init_lr
+    lrs = [lr]
+    learning_rate_scheduler_fn = eval(learning_rate_scheduler)
+    for epoch in range(1, epochs):
+        lr = learning_rate_scheduler_fn(
+                                         epoch, lr, 
+                                         **learning_rate_scheduler_kwargs
+                                        )
+        lrs.append(lr)
+        
+    plt.plot(lrs)
+    plt.grid()
+    plt.xlabel("epoch")
+    plt.ylabel("learning rate")
+
 class GenericUnet:
 
     def __init__(self, *args, **kwargs):
@@ -51,11 +85,14 @@ class GenericUnet:
             'non_trainable_params':self.non_trainable_params,
             'class_weights':{str(k):v for k,v in self.class_weights.items()},
             'loss': self.loss_name,
-            'partitions_id':self.partitions_id
+            'partitions_id':self.partitions_id,
+            'metrics_args': self.metrics_args
         }
-        wconfig.update(self.metrics_args)
-        return wconfig
+        if self.learning_rate_scheduler_fn is not None:
+            wconfig['learning_rate_scheduler'] = self.learning_rate_scheduler
+            wconfig['learning_rate_scheduler_kwargs'] = self.learning_rate_scheduler_kwargs
 
+        return wconfig
 
     @staticmethod
     def restore_init_from_file(
@@ -121,7 +158,9 @@ class GenericUnet:
                  n_val_samples = 10,
                  log_imgs = False,
                  log_perclass = False,
-                 log_confusion_matrix = False
+                 log_confusion_matrix = False,
+                 learning_rate_scheduler = None,
+                 learning_rate_scheduler_kwargs = {}
                 ):
 
         print (f"initializing {self.get_name()}")
@@ -129,6 +168,10 @@ class GenericUnet:
         assert 'partitions_id' in data_generator_split_args.keys(), \
                "'data_generator_split_args' must have 'partitions_id'"
 
+        # usually a function name
+        self.learning_rate_scheduler_fn = eval(learning_rate_scheduler)
+        self.learning_rate_scheduler = learning_rate_scheduler
+        self.learning_rate_scheduler_kwargs = learning_rate_scheduler_kwargs
         self.log_imgs = log_imgs
         self.log_perclass = log_perclass
         self.log_confusion_matrix = log_confusion_matrix
@@ -329,8 +372,19 @@ class GenericUnet:
         run_file_path = os.path.join(self.outdir, self.run_id + ".h5")            
         tr_loss = 0
         min_val_loss = np.inf
+        lr = self.learning_rate
         for epoch in range(epochs):
             print (f"\nepoch {epoch}", flush=True)
+
+            if epoch>0 and self.learning_rate_scheduler_fn is not None:
+                # apply learning rate schedule 
+                lr = self.learning_rate_scheduler_fn(
+                                                     epoch, lr, 
+                                                     **self.learning_rate_scheduler_kwargs
+                                                    )
+
+                self.opt.learning_rate.assign(lr)
+
             losses = []
             for step_nb,(x,(p,l)) in enumerate(pbar(self.tr)):
                 # trim to unet input shape
@@ -387,14 +441,13 @@ class GenericUnet:
 
             df_perclass = pd.DataFrame([{k:v for k,v in r.items() if 'global' not in k and k!='loss'}], index=["val"]).T
 
-
-
             # save model and log images if better val loss
             if val_loss < min_val_loss:
                 min_val_loss = val_loss
                 self.train_model.save_weights(run_file_path)
 
                 if self.wandb_project is not None:
+                    log_dict['val/min_loss'] = val_loss
                     if self.log_imgs:
                         log_dict['val/sample'] = self.plot_val_sample(self.n_val_samples, return_fig=True)
                     if self.log_confusion_matrix:
@@ -412,9 +465,13 @@ class GenericUnet:
                     log_dict["val/f1"] = val_mean_f1
                     log_dict["val/iou"] = val_mean_iou
                 log_dict["val/maeprops_on_chip"] = val_mean_mae
+                if self.learning_rate_scheduler_fn is not None:
+                    log_dict['train/learning_rate'] = lr
          
                 wandb.log(log_dict)
                 
+            if self.learning_rate_scheduler_fn is not None:
+                txt_metrics += f" lr {lr:.7f}"
             # log to screen
             print (f"epoch {epoch:3d}, train loss {tr_loss:.5f}", flush=True)
             print (f"epoch {epoch:3d},   val loss {val_loss:.5f} {txt_metrics}", flush=True)
