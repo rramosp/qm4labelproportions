@@ -169,7 +169,7 @@ class GenericUnet:
             self.class_weights_values = [0] + self.class_weights_values    
 
         self.run_name = f"{self.get_name()}-{self.partitions_id}-{self.loss_name}-{datetime.now().strftime('%Y%m%d[%H%M]')}"
-        self.train_model, self.val_model = self.get_models()
+        self.train_model = self.get_model()
         self.opt = tf.keras.optimizers.Adam(learning_rate = self.learning_rate)
 
         self.metrics = metrics.ProportionsMetrics(class_weights_values = self.class_weights_values, **self.metrics_args)
@@ -303,7 +303,7 @@ class GenericUnet:
         raise NotImplementedError()
 
 
-    def get_models(self):
+    def get_model(self):
         raise NotImplementedError()
 
     def get_loss(self, out, p, l): 
@@ -319,7 +319,7 @@ class GenericUnet:
         raise ValueError(f"unkown loss '{self.loss_name}'")
 
     def predict(self, x):
-        out = self.val_model(x)
+        out = self.train_model(x)
         return out
 
     def get_trainable_variables(self):
@@ -496,7 +496,7 @@ class CustomUnetSegmentation(GenericUnet):
     def __get_name__(self):
         return "custom_unet"
 
-    def get_models(self):
+    def get_model(self):
         input_shape=self.input_shape
         act = self.activation
         # Build U-Net model
@@ -565,7 +565,7 @@ class CustomUnetSegmentation(GenericUnet):
 
         model = Model(inputs=[inputs], outputs=[outputs])
         
-        return model, model
+        return model
 
 
 class SMUnetSegmentation(GenericUnet):
@@ -579,7 +579,7 @@ class SMUnetSegmentation(GenericUnet):
         w.update(self.sm_keywords)
         return w
 
-    def get_models(self):
+    def get_model(self):
         self.unet = sm.Unet(input_shape=(None,None,3), 
                             classes = self.number_of_classes, 
                             activation = 'softmax',
@@ -588,7 +588,7 @@ class SMUnetSegmentation(GenericUnet):
         inp = tf.keras.layers.Input(shape=(None, None, 3))
         out = self.unet(inp)
         m   = tf.keras.models.Model([inp], [out])
-        return m, m
+        return m
 
 
     def __get_name__(self):
@@ -648,7 +648,7 @@ class PatchProportionsRegression(GenericUnet):
                     'activation':self.activation})
         return w
 
-    def get_models(self):
+    def get_model(self):
         inputs = tf.keras.layers.Input(shape=self.input_shape)
         # Create patches.
         patch_extr = Patches(self.patch_size, 96, self.pred_strides)
@@ -662,7 +662,7 @@ class PatchProportionsRegression(GenericUnet):
         out   = tf.reshape(probs, [-1, patch_extr.num_patches, patch_extr.num_patches, self.number_of_classes])
         
         m = tf.keras.models.Model([inputs], [out])
-        return m, m
+        return m
 
     def __get_name__(self):
         return f"patch_classifier"
@@ -691,7 +691,7 @@ class PatchClassifierSegmentation(GenericUnet):
                     'dropout_rate':self.dropout_rate})
         return w
 
-    def get_models(self):
+    def get_model(self):
         inputs = tf.keras.layers.Input(shape=self.input_shape)
         # Create patches.
         patch_extr = Patches(self.patch_size, 96, self.pred_strides)
@@ -713,7 +713,7 @@ class PatchClassifierSegmentation(GenericUnet):
                             activation='softmax')
             out = conv2dt(out)
         m = tf.keras.models.Model([inputs], [out])
-        return m, m
+        return m
 
 
     def __get_name__(self):
@@ -748,7 +748,7 @@ class ConvolutionsRegression(GenericUnet):
     def produces_pixel_predictions(self):
         return False    
     
-    def get_models(self):
+    def get_model(self):
         inputs = Input(self.input_shape)
         backcone_output  = self.backbone(include_top=False, input_tensor=inputs, **self.backbone_kwargs)(inputs)
         flat   = Flatten()(backcone_output)
@@ -756,7 +756,7 @@ class ConvolutionsRegression(GenericUnet):
         dense2 = Dense(1024, activation="relu")(dense1)
         outputs = Dense(self.number_of_classes, activation='softmax')(dense2)
         model = Model([inputs], [outputs])
-        return model, model
+        return model
 
 from . import kqm 
 
@@ -914,14 +914,14 @@ class QMPatchSegmentation(GenericUnet):
             p = tf.gather(p, self.metrics.class_ids, axis=1)
             return tf.keras.losses.mse(out,p)
     '''
-    def get_models(self):
+    def get_model(self):
         train_model = QMPatchSegmModel(self.number_of_classes,
                                         self.patch_size,
                                         self.pred_strides,
                                         self.n_comp,
                                         self.sigma_ini,
                                         self.deep)
-        return train_model, train_model
+        return train_model
 
     def predict(self, x):
         return self.train_model.predict_img(x)
@@ -996,7 +996,7 @@ class AEQMPatchSegmModel(tf.keras.Model):
         probs = tf.einsum('...j,...ji->...i', y_w, y_v ** 2, optimize="optimal")
         return probs
 
-    def predict(self, inputs):
+    def predict_img(self, inputs):
         '''
         Predicts an output image in contrast to the `call` method 
         that outputs label proportions.
@@ -1072,7 +1072,7 @@ class AEQMPatchSegmentation(GenericUnet):
     def __get_name__(self):
         return f"AE_KQM_classifier"
 
-    def get_models(self):
+    def get_model(self):
         train_model = AEQMPatchSegmModel(
                                         self.number_of_classes,
                                         self.patch_size,
@@ -1080,10 +1080,10 @@ class AEQMPatchSegmentation(GenericUnet):
                                         self.n_comp,
                                         self.sigma_ini,
                                         self.encoded_size)
-        return train_model, train_model
+        return train_model
 
     def predict(self, x):
-        return self.train_model.predict(x)
+        return self.train_model.predict_img(x)
 
     def init_model_params(self):
         batch_size_backup = self.tr.batch_size
@@ -1194,7 +1194,7 @@ class QMRegression(GenericUnet):
     def produces_pixel_predictions(self):
         return False    
     
-    def get_models(self):
+    def get_model(self):
         model = QMRegressionModel(self.number_of_classes,
                                 self.n_comp,
                                 self.sigma_ini,
@@ -1202,4 +1202,4 @@ class QMRegression(GenericUnet):
                                 self.backbone,
                                 self.backbone_kwargs,
                                 self.input_shape)
-        return model, model
+        return model
