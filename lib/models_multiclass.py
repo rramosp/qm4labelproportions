@@ -1166,7 +1166,7 @@ class AEQMPatchSegmentation(GenericExperimentModel):
             patches = patch_extr(tr_x)
             idx = np.random.randint(low=0, high=patch_extr.num_patches ** 2, size=(self.n_comp,))
             patches = tf.gather(patches, idx, axis=1, batch_dims=1)
-            patches = self.encoder(tf.reshape(patches, (-1, self.patch_size, self.patch_size, 3)))
+            patches = self.train_model.encoder(tf.reshape(patches, (-1, self.patch_size, self.patch_size, 3)))
         self.train_model.kqmu.c_x.assign(patches)
         #y = tf.concat([tr_p[:,2:3], 1. - tr_p[:,2:3]], axis=1)
         #y = tf.gather(tr_p, self.metrics.class_ids, axis=1)
