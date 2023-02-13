@@ -169,7 +169,10 @@ class GenericUnet:
                "'data_generator_split_args' must have 'partitions_id'"
 
         # usually a function name
-        self.learning_rate_scheduler_fn = eval(learning_rate_scheduler)
+        if learning_rate_scheduler is not None:
+            self.learning_rate_scheduler_fn = eval(learning_rate_scheduler)
+        else:
+            self.learning_rate_scheduler_fn = None
         self.learning_rate_scheduler = learning_rate_scheduler
         self.learning_rate_scheduler_kwargs = learning_rate_scheduler_kwargs
         self.log_imgs = log_imgs
