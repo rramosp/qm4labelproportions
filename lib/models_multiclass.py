@@ -41,8 +41,8 @@ class GenericUnet:
       pass
 
     def get_wandb_config(self):
-        self.trainable_params = sum(count_params(layer) for layer in self.train_model.trainable_weights)
-        self.non_trainable_params = sum(count_params(layer) for layer in self.train_model.non_trainable_weights)
+        self.trainable_params = count_params(self.train_model.trainable_weights)
+        self.non_trainable_params = count_params(self.train_model.non_trainable_weights)
         wconfig = {
             "model_class":self.__class__.__name__,
             "learning_rate":self.learning_rate,
@@ -759,84 +759,30 @@ class ConvolutionsRegression(GenericUnet):
         return model, model
 
 from . import kqm 
-class QMPatchSegmentation(GenericUnet):
 
-    def __init__(self, 
-                input_shape,
+'''
+A class that implements a KQM Segmentation model as a Keras model.
+'''
+class QMPatchSegmModel(tf.keras.Model):
+    def __init__(self,
+                number_of_classes,
                 patch_size, 
                 pred_strides,
                 n_comp,
                 sigma_ini,
                 deep):
-        self.input_shape = input_shape
+        super().__init__()
+        self.number_of_classes = number_of_classes
         self.patch_size = patch_size 
         self.pred_strides = pred_strides
         self.dim_x = patch_size ** 2 * 3
         self.n_comp = n_comp
         self.sigma_ini = sigma_ini
         self.deep = deep
-
-    def get_wandb_config(self):
-        if self.deep:
-            self.trainable_params = sum(count_params(layer) for layer in (
-                self.train_model.trainable_weights + self.deep_model.trainable_weights))
-            self.non_trainable_params = sum(count_params(layer) for 
-                layer in ( self.train_model.non_trainable_weights + 
-                          self.deep_model.non_trainable_weights))
-        else:
-            self.trainable_params = sum(count_params(layer) for layer in (
-                self.train_model.trainable_weights))
-            self.non_trainable_params = sum(count_params(layer) for 
-                layer in self.train_model.non_trainable_weights)
-        w = super().get_wandb_config()
-        w.update({'input_shape':self.input_shape,
-                    'patch_size':self.patch_size, 
-                    'pred_strides': self.pred_strides,
-                    'n_comp':self.n_comp,
-                    'sigma_ini':self.sigma_ini,
-                    'deep':self.deep,
-                    'trainable_params':self.trainable_params,
-                    'non_trainable_params':self.non_trainable_params})
-        return w
-
-    def get_trainable_variables(self):
-        if self.deep:
-            return (self.train_model.trainable_variables +
-                    [self.sigma] +
-                    self.deep_model.trainable_variables)
-        else:
-            return (self.train_model.trainable_variables +
-                    [self.sigma])
-
-    def init_model_params(self):
-        batch_size_backup = self.tr.batch_size
-        self.tr.batch_size = self.n_comp
-        self.tr.on_epoch_end()
-        gen_tr = iter(self.tr) 
-        tr_x, (tr_p, tr_l) = gen_tr.__next__()
-        tr_x, tr_l = self.normitem(tr_x, tr_l)
-        self.predict(tr_x)
-        patch_extr = Patches(self.patch_size, 96, self.patch_size)
-        patches = patch_extr(tr_x)
-        idx = np.random.randint(low=0, high=patch_extr.num_patches ** 2, size=(self.n_comp,))
-        patches = tf.gather(patches, idx, axis=1, batch_dims=1)
-        self.kqmu.c_x.assign(patches)
-        #y = tf.concat([tr_p[:,2:3], 1. - tr_p[:,2:3]], axis=1)
-        #y = tf.gather(tr_p, self.metrics.class_ids, axis=1)
-        #self.kqmu.c_y.assign(y)
-        # restore val dataset config
-        self.tr.batch_size = batch_size_backup
-        self.tr.on_epoch_end()
-        return 
-
-    '''
-    def get_loss(self, out, p, l):
-        if self.loss_name == 'multiclass_proportions_mse':
-            p = tf.gather(p, self.metrics.class_ids, axis=1)
-            return tf.keras.losses.mse(out,p)
-    '''
-    def get_models(self):
-        self.sigma = tf.Variable(self.sigma_ini, dtype=tf.float32, trainable=True)       
+        self.sigma = tf.Variable(self.sigma_ini,
+                                 dtype=tf.float32,
+                                 name="sigma", 
+                                 trainable=True)       
         if self.deep:
             # Lenet Model
             self.deep_model = tf.keras.Sequential()
@@ -859,12 +805,11 @@ class QMPatchSegmentation(GenericUnet):
                             dim_y=self.number_of_classes,
                             n_comp=self.n_comp
                             )
-        inputs = tf.keras.layers.Input(shape=self.input_shape)
-        # Create patches.
-        patch_extr = Patches(self.patch_size, 96, self.pred_strides)
-        patches = patch_extr(inputs)
-        # Model for training
-        w = tf.ones_like(patches[:, :, 0]) / (patch_extr.num_patches ** 2)
+        self.patch_extr = Patches(self.patch_size, 96, self.pred_strides)
+
+    def call(self, inputs):
+        patches = self.patch_extr(inputs)
+        w = tf.ones_like(patches[:, :, 0]) / (self.patch_extr.num_patches ** 2)
         rho_x = kqm.comp2dm(w, patches)
         rho_y = self.kqmu(rho_x)
         y_w, y_v = kqm.dm2comp(rho_y)
@@ -872,13 +817,16 @@ class QMPatchSegmentation(GenericUnet):
         y_v = y_v / norms_y
         probs = tf.einsum('...j,...ji->...i', y_w, y_v ** 2, optimize="optimal")
         # probs = probs[:, tf.newaxis, tf.newaxis, :]
-        train_model =  tf.keras.models.Model([inputs], [probs])
+        return probs
 
-        # Model for prediction
-        patch_extr = Patches(self.patch_size, 96, self.pred_strides)
-        patches = patch_extr(inputs)
+    def predict_img(self, inputs):
+        '''
+        Predicts an output image in contrast to the `call` method 
+        that outputs label proportions.
+        '''
+        patches = self.patch_extr(inputs)
         batch_size = tf.shape(patches)[0]
-        indiv_patches = tf.reshape(patches, [batch_size * (patch_extr.num_patches ** 2), 
+        indiv_patches = tf.reshape(patches, [batch_size * (self.patch_extr.num_patches ** 2), 
                                              self.dim_x])
         rho_x = kqm.pure2dm(indiv_patches)
         rho_y = self.kqmu(rho_x)
@@ -893,19 +841,95 @@ class QMPatchSegmentation(GenericUnet):
                         kernel_initializer=tf.keras.initializers.Ones(),
                         bias_initializer=tf.keras.initializers.Zeros(),
                         trainable=False)
-        probs = tf.reshape(probs, [-1, patch_extr.num_patches, patch_extr.num_patches, self.number_of_classes])
+        probs = tf.reshape(probs, [-1, 
+                                   self.patch_extr.num_patches, 
+                                   self.patch_extr.num_patches, self.number_of_classes])
         ones = tf.ones_like(probs[..., 0:1])
         outs = []
         for i in range(self.number_of_classes):
             out_i = conv2dt(probs[..., i:i + 1]) / conv2dt(ones)
             outs.append(out_i)
         out = tf.concat(outs, axis=3)
-        predict_model = tf.keras.models.Model([inputs], [out])
-        return train_model, predict_model
+        return out
 
+    def get_config(self):
+        config = {
+            'patch_size': self.patch_size,
+            'pred_strides': self.pred_strides,
+            'n_comp': self.n_comp,
+            'sigma_ini': self.sigma_ini,
+            'deep': self.deep
+        }
+        return config
+
+class QMPatchSegmentation(GenericUnet):
+
+    def __init__(self, 
+                patch_size, 
+                pred_strides,
+                n_comp,
+                sigma_ini,
+                deep):
+        self.patch_size = patch_size 
+        self.pred_strides = pred_strides
+        self.dim_x = patch_size ** 2 * 3
+        self.n_comp = n_comp
+        self.sigma_ini = sigma_ini
+        self.deep = deep
+
+    def get_wandb_config(self):
+        w = super().get_wandb_config()
+        w.update({
+                    'patch_size':self.patch_size, 
+                    'pred_strides': self.pred_strides,
+                    'n_comp':self.n_comp,
+                    'sigma_ini':self.sigma_ini,
+                    'deep':self.deep})
+        return w
+
+    def init_model_params(self):
+        batch_size_backup = self.tr.batch_size
+        self.tr.batch_size = self.n_comp
+        self.tr.on_epoch_end()
+        gen_tr = iter(self.tr) 
+        tr_x, (tr_p, tr_l) = gen_tr.__next__()
+        tr_x, tr_l = self.normitem(tr_x, tr_l)
+        self.predict(tr_x)
+        patch_extr = Patches(self.patch_size, 96, self.patch_size)
+        patches = patch_extr(tr_x)
+        idx = np.random.randint(low=0, high=patch_extr.num_patches ** 2, size=(self.n_comp,))
+        patches = tf.gather(patches, idx, axis=1, batch_dims=1)
+        self.train_model.kqmu.c_x.assign(patches)
+        #y = tf.concat([tr_p[:,2:3], 1. - tr_p[:,2:3]], axis=1)
+        #y = tf.gather(tr_p, self.metrics.class_ids, axis=1)
+        #self.kqmu.c_y.assign(y)
+        # restore val dataset config
+        self.tr.batch_size = batch_size_backup
+        self.tr.on_epoch_end()
+        return 
+
+    '''
+    def get_loss(self, out, p, l):
+        if self.loss_name == 'multiclass_proportions_mse':
+            p = tf.gather(p, self.metrics.class_ids, axis=1)
+            return tf.keras.losses.mse(out,p)
+    '''
+    def get_models(self):
+        train_model = QMPatchSegmModel(self.number_of_classes,
+                                        self.patch_size,
+                                        self.pred_strides,
+                                        self.n_comp,
+                                        self.sigma_ini,
+                                        self.deep)
+        return train_model, train_model
+
+    def predict(self, x):
+        return self.train_model.predict_img(x)
 
     def __get_name__(self):
         return f"KQM_classifier"
+
+
 
 def create_resize_encoder(input_shape, encoded_size=64, filter_size=[32, 64, 128]):
     encoder = Sequential([
@@ -926,53 +950,60 @@ def create_resize_encoder(input_shape, encoded_size=64, filter_size=[32, 64, 128
     ])
     return encoder
 
-class AEQMPatchSegmentation(QMPatchSegmentation):
-
-    def __init__(self, enc_weights_file=None, kqmcx_file=None, **kwargs):
-        super().__init__(**kwargs)
-        self.enc_weights_file = enc_weights_file
-        self.kqmcx_file = kqmcx_file
-
-    def __get_name__(self):
-        return f"AE_KQM_classifier"
-
-    def get_trainable_variables(self):
-        return (self.train_model.trainable_variables +
-                [self.sigma])
-
-    def get_models(self):
-        self.encoded_size = 64
-        self.sigma = tf.Variable(self.sigma_ini, dtype=tf.float32, trainable=True)       
+'''
+A class that implements an Autoencoder KQM Segmentation model as a Keras model.
+'''
+class AEQMPatchSegmModel(tf.keras.Model):
+    def __init__(self, 
+                number_of_classes,
+                patch_size, 
+                pred_strides,
+                n_comp,
+                sigma_ini,
+                encoded_size=64):
+        super().__init__()
+        self.number_of_classes = number_of_classes
+        self.patch_size = patch_size 
+        self.pred_strides = pred_strides
+        self.encoded_size = encoded_size
+        self.n_comp = n_comp
+        self.sigma_ini = sigma_ini
+        self.sigma = tf.Variable(self.sigma_ini,
+                                 dtype=tf.float32,
+                                 name="sigma", 
+                                 trainable=True)       
         kernel_x = kqm.create_rbf_kernel(self.sigma)
-        self.encoder = create_resize_encoder((self.patch_size, self.patch_size, 3), encoded_size=self.encoded_size)
-        self.dim_x = self.encoded_size
         self.kqmu = kqm.KQMUnit(kernel_x,
-                            dim_x=self.dim_x,
+                            dim_x=self.encoded_size,
                             dim_y=self.number_of_classes,
                             n_comp=self.n_comp
                             )
-        inputs = tf.keras.layers.Input(shape=self.input_shape)
-        # Create patches.
-        patch_extr = Patches(self.patch_size, 96, self.pred_strides)
-        patches = patch_extr(inputs)
+        self.encoder = create_resize_encoder((self.patch_size, self.patch_size, 3), encoded_size=self.encoded_size)
+        self.patch_extr = Patches(self.patch_size, 96, self.pred_strides)
+
+    def call(self, inputs):
+        patches = self.patch_extr(inputs)
         patches = self.encoder(tf.reshape(patches, (-1, self.patch_size, self.patch_size, 3)))
-        patches = tf.reshape(patches, (-1, patch_extr.num_patches ** 2, self.encoded_size))
-        # Model for training
-        w = tf.ones_like(patches[:, :, 0]) / (patch_extr.num_patches ** 2)
+        patches = tf.reshape(patches, (-1, 
+                                       self.patch_extr.num_patches ** 2, 
+                                       self.encoded_size))
+        w = tf.ones_like(patches[:, :, 0]) / (self.patch_extr.num_patches ** 2)
         rho_x = kqm.comp2dm(w, patches)
         rho_y = self.kqmu(rho_x)
         y_w, y_v = kqm.dm2comp(rho_y)
         norms_y = tf.expand_dims(tf.linalg.norm(y_v, axis=-1), axis=-1)
         y_v = y_v / norms_y
         probs = tf.einsum('...j,...ji->...i', y_w, y_v ** 2, optimize="optimal")
-        # probs = probs[:, tf.newaxis, tf.newaxis, :]
-        train_model =  tf.keras.models.Model([inputs], [probs])
+        return probs
 
-        # Model for prediction
-        patch_extr = Patches(self.patch_size, 96, self.pred_strides)
-        patches = patch_extr(inputs)
+    def predict(self, inputs):
+        '''
+        Predicts an output image in contrast to the `call` method 
+        that outputs label proportions.
+        '''
+        patches = self.patch_extr(inputs)
         batch_size = tf.shape(patches)[0]
-        indiv_patches = tf.reshape(patches, [batch_size * (patch_extr.num_patches ** 2), 
+        indiv_patches = tf.reshape(patches, [batch_size * (self.patch_extr.num_patches ** 2), 
                                              self.patch_size, self.patch_size, 3])
         indiv_patches = self.encoder(indiv_patches)
         rho_x = kqm.pure2dm(indiv_patches)
@@ -988,15 +1019,71 @@ class AEQMPatchSegmentation(QMPatchSegmentation):
                         kernel_initializer=tf.keras.initializers.Ones(),
                         bias_initializer=tf.keras.initializers.Zeros(),
                         trainable=False)
-        probs = tf.reshape(probs, [-1, patch_extr.num_patches, patch_extr.num_patches, self.number_of_classes])
+        probs = tf.reshape(probs, [-1, 
+                                   self.patch_extr.num_patches, 
+                                   self.patch_extr.num_patches, 
+                                   self.number_of_classes])
         ones = tf.ones_like(probs[..., 0:1])
         outs = []
         for i in range(self.number_of_classes):
             out_i = conv2dt(probs[..., i:i + 1]) / conv2dt(ones)
             outs.append(out_i)
         out = tf.concat(outs, axis=3)
-        predict_model = tf.keras.models.Model([inputs], [out])
-        return train_model, predict_model
+        return out
+
+    def get_config(self):
+        config = {
+            'number_of_classes': self.number_of_classes,
+            'patch_size': self.patch_size,
+            'pred_strides': self.pred_strides,
+            'n_comp': self.n_comp,
+            'sigma_ini': self.sigma_ini,
+        }
+        return config
+
+class AEQMPatchSegmentation(GenericUnet):
+
+    def __init__(self, 
+                patch_size, 
+                pred_strides,
+                n_comp,
+                sigma_ini,
+                encoded_size=64,
+                enc_weights_file=None, 
+                kqmcx_file=None):
+        self.patch_size = patch_size 
+        self.pred_strides = pred_strides
+        self.n_comp = n_comp
+        self.sigma_ini = sigma_ini
+        self.enc_weights_file = enc_weights_file
+        self.kqmcx_file = kqmcx_file
+        self.encoded_size=encoded_size
+
+    def get_wandb_config(self):
+        w = super().get_wandb_config()
+        w.update({
+                    'patch_size':self.patch_size, 
+                    'pred_strides': self.pred_strides,
+                    'n_comp':self.n_comp,
+                    'sigma_ini':self.sigma_ini,
+                    'encoded_size':self.encoded_size})
+        return w
+
+    def __get_name__(self):
+        return f"AE_KQM_classifier"
+
+    def get_models(self):
+        train_model = AEQMPatchSegmModel(
+                                        self.number_of_classes,
+                                        self.patch_size,
+                                        self.pred_strides,
+                                        self.n_comp,
+                                        self.sigma_ini,
+                                        self.encoded_size)
+        return train_model, train_model
+
+    def predict(self, x):
+        return self.train_model.predict(x)
 
     def init_model_params(self):
         batch_size_backup = self.tr.batch_size
@@ -1007,7 +1094,7 @@ class AEQMPatchSegmentation(QMPatchSegmentation):
         tr_x, tr_l = self.normitem(tr_x, tr_l)
         self.predict(tr_x)
         if self.enc_weights_file is not None:
-            self.encoder.load_weights(self.enc_weights_file)
+            self.train_model.encoder.load_weights(self.enc_weights_file)
         if self.kqmcx_file is not None:
             patches = np.load(self.kqmcx_file)
             assert patches.shape[0] == self.n_comp and  patches.shape[1] == self.encoded_size, \
@@ -1018,7 +1105,7 @@ class AEQMPatchSegmentation(QMPatchSegmentation):
             idx = np.random.randint(low=0, high=patch_extr.num_patches ** 2, size=(self.n_comp,))
             patches = tf.gather(patches, idx, axis=1, batch_dims=1)
             patches = self.encoder(tf.reshape(patches, (-1, self.patch_size, self.patch_size, 3)))
-        self.kqmu.c_x.assign(patches)
+        self.train_model.kqmu.c_x.assign(patches)
         #y = tf.concat([tr_p[:,2:3], 1. - tr_p[:,2:3]], axis=1)
         #y = tf.gather(tr_p, self.metrics.class_ids, axis=1)
         #self.kqmu.c_y.assign(y)
@@ -1026,3 +1113,93 @@ class AEQMPatchSegmentation(QMPatchSegmentation):
         self.tr.batch_size = batch_size_backup
         self.tr.on_epoch_end()
         return 
+
+class QMRegressionModel(tf.keras.Model):
+
+    def __init__(self, 
+                number_of_classes,
+                n_comp,
+                sigma_ini,
+                encoded_size=64,
+                backbone=tf.keras.applications.MobileNetV2,
+                backbone_kwargs={'weights': None},
+                in_shape=(96, 96, 3)):
+        super().__init__()
+        self.number_of_classes = number_of_classes
+        self.n_comp = n_comp
+        self.sigma_ini = sigma_ini
+        self.encoded_size = encoded_size
+        self.backbone_model = backbone(include_top=False, input_shape=in_shape, **backbone_kwargs)
+        self.dense1 = tf.keras.layers.Dense(512, activation='relu')
+        self.dense2 = tf.keras.layers.Dense(self.encoded_size, activation='relu')
+        self.sigma = tf.Variable(self.sigma_ini, name="sigma", trainable=True)
+        kernel_x = kqm.create_rbf_kernel(self.sigma)
+        self.kqmu = kqm.KQMUnit(kernel_x,
+                            dim_x=self.encoded_size,
+                            dim_y=self.number_of_classes,
+                            n_comp=self.n_comp
+                            )
+
+    def call(self, x):
+        x = self.backbone_model(x)
+        x = tf.keras.layers.GlobalAveragePooling2D()(x)
+        x = self.dense1(x)
+        x = self.dense2(x)
+        rho_x = kqm.pure2dm(x)
+        rho_y = self.kqmu(rho_x)
+        y_w, y_v = kqm.dm2comp(rho_y)
+        norms_y = tf.expand_dims(tf.linalg.norm(y_v, axis=-1), axis=-1)
+        y_v = y_v / norms_y
+        probs = tf.einsum('...j,...ji->...i', y_w, y_v ** 2, optimize="optimal")
+        return probs
+
+class QMRegression(GenericUnet):
+    
+    def __init__(self, 
+                n_comp,
+                sigma_ini,
+                encoded_size=64,
+                backbone=tf.keras.applications.MobileNetV2,
+                backbone_kwargs={'weights': None},
+                input_shape=(96,96,3)):
+        """
+        backbone: a class under tensorflow.keras.applications
+        """
+        self.n_comp = n_comp
+        self.sigma_ini = sigma_ini
+        self.encoded_size = encoded_size
+        self.backbone = backbone
+        self.backbone_kwargs = backbone_kwargs
+        self.input_shape = input_shape
+    
+    def get_wandb_config(self):
+        w = super().get_wandb_config()
+        w.update({'input_shape':self.input_shape,
+                    'backbone':self.backbone, 
+                    'backbone_kwargs': self.backbone_kwargs,
+                    'n_comp': self.n_comp,
+                    'sigma_ini': self.sigma_ini,
+                    'encoded_size': self.encoded_size
+                    })
+        return w
+
+    def __get_name__(self):
+        r = f"qmreg_{self.backbone.__name__}"
+
+        if 'weights' in self.backbone_kwargs.keys() and self.backbone_kwargs['weights'] is not None:
+            r += f"_{self.backbone_kwargs['weights']}"
+
+        return r
+
+    def produces_pixel_predictions(self):
+        return False    
+    
+    def get_models(self):
+        model = QMRegressionModel(self.number_of_classes,
+                                self.n_comp,
+                                self.sigma_ini,
+                                self.encoded_size,
+                                self.backbone,
+                                self.backbone_kwargs,
+                                self.input_shape)
+        return model, model
