@@ -68,7 +68,7 @@ def plot_schedule(init_lr, epochs, learning_rate_scheduler, learning_rate_schedu
     plt.xlabel("epoch")
     plt.ylabel("learning rate")
 
-class GenericUnet:
+class GenericExperimentModel:
 
     def __init__(self, *args, **kwargs):
       # just to have a constructor accepting parameters
@@ -421,7 +421,8 @@ class GenericUnet:
                 if self.produces_pixel_predictions():
                     ious.append(self.metrics.compute_iou(l,out))
 
-                self.val_classification_metrics.update_state(l,out)
+                if self.produces_pixel_predictions():
+                    self.val_classification_metrics.update_state(l,out)
                     
             # summarize validation stuff
             val_loss = np.mean(losses)
@@ -451,15 +452,16 @@ class GenericUnet:
 
                 if self.wandb_project is not None:
                     log_dict['val/min_loss'] = val_loss
-                    if self.log_imgs:
-                        log_dict['val/sample'] = self.plot_val_sample(self.n_val_samples, return_fig=True)
-                    if self.log_confusion_matrix:
-                        img = metrics.plot_confusion_matrix(self.val_classification_metrics.cm)
-                        log_dict['val/confusion_matrix'] = wandb.Image(img, caption="confusion matrix")
-                    if self.log_perclass:
-                        log_dict['val/perclass'] = \
-                            wandb.Table(columns = ['metric', 'val'], 
-                                        data=[[i,j[0]] for i,j in zip (df_perclass.index, df_perclass.values)])    
+                    if self.produces_pixel_predictions():
+                        if self.log_imgs:
+                            log_dict['val/sample'] = self.plot_val_sample(self.n_val_samples, return_fig=True)
+                        if self.log_confusion_matrix:
+                            img = metrics.plot_confusion_matrix(self.val_classification_metrics.cm)
+                            log_dict['val/confusion_matrix'] = wandb.Image(img, caption="confusion matrix")
+                        if self.log_perclass:
+                            log_dict['val/perclass'] = \
+                                wandb.Table(columns = ['metric', 'val'], 
+                                            data=[[i,j[0]] for i,j in zip (df_perclass.index, df_perclass.values)])    
 
             # log to wandb
             if self.wandb_project is not None:
@@ -531,7 +533,7 @@ class GenericUnet:
         return r.T
 
 
-class CustomUnetSegmentation(GenericUnet):
+class CustomUnetSegmentation(GenericExperimentModel):
 
     def __init__(self, nlayers = 5, 
                        activation = 'relu', 
@@ -628,7 +630,7 @@ class CustomUnetSegmentation(GenericUnet):
         return model
 
 
-class SMUnetSegmentation(GenericUnet):
+class SMUnetSegmentation(GenericExperimentModel):
 
     def __init__(self, **sm_keywords):
         self.sm_keywords = sm_keywords
@@ -683,7 +685,7 @@ class Patches(tf.keras.layers.Layer):
         return patches
 
 
-class PatchProportionsRegression(GenericUnet):
+class PatchProportionsRegression(GenericExperimentModel):
 
     def __init__(self, input_shape,
                      patch_size, 
@@ -727,7 +729,7 @@ class PatchProportionsRegression(GenericUnet):
     def __get_name__(self):
         return f"patch_classifier"
 
-class PatchClassifierSegmentation(GenericUnet):
+class PatchClassifierSegmentation(GenericExperimentModel):
 
     def __init__(self, input_shape,
                      patch_size, 
@@ -780,7 +782,7 @@ class PatchClassifierSegmentation(GenericUnet):
         return f"patch_classifier_segm"
 
 
-class ConvolutionsRegression(GenericUnet):
+class ConvolutionsRegression(GenericExperimentModel):
     
     def __init__(self, backbone, backbone_kwargs={'weights': None}, input_shape=(96,96,3)):
         """
@@ -922,7 +924,7 @@ class QMPatchSegmModel(tf.keras.Model):
         }
         return config
 
-class QMPatchSegmentation(GenericUnet):
+class QMPatchSegmentation(GenericExperimentModel):
 
     def __init__(self, 
                 patch_size, 
@@ -1101,7 +1103,7 @@ class AEQMPatchSegmModel(tf.keras.Model):
         }
         return config
 
-class AEQMPatchSegmentation(GenericUnet):
+class AEQMPatchSegmentation(GenericExperimentModel):
 
     def __init__(self, 
                 patch_size, 
@@ -1185,16 +1187,16 @@ class QMRegressionModel(tf.keras.Model):
                 backbone_kwargs={'weights': None},
                 in_shape=(96, 96, 3)):
         super().__init__()
-        self.number_of_classes = number_of_classes
         self.n_comp = n_comp
         self.sigma_ini = sigma_ini
         self.encoded_size = encoded_size
+        self.number_of_classes = number_of_classes
         self.backbone_model = backbone(include_top=False, input_shape=in_shape, **backbone_kwargs)
         self.dense1 = tf.keras.layers.Dense(512, activation='relu')
         self.dense2 = tf.keras.layers.Dense(self.encoded_size, activation='relu')
         self.sigma = tf.Variable(self.sigma_ini, name="sigma", trainable=True)
-        kernel_x = kqm.create_rbf_kernel(self.sigma)
-        self.kqmu = kqm.KQMUnit(kernel_x,
+        self.kernel_x = kqm.create_rbf_kernel(self.sigma)
+        self.kqmu = kqm.KQMUnit(self.kernel_x,
                             dim_x=self.encoded_size,
                             dim_y=self.number_of_classes,
                             n_comp=self.n_comp
@@ -1213,7 +1215,7 @@ class QMRegressionModel(tf.keras.Model):
         probs = tf.einsum('...j,...ji->...i', y_w, y_v ** 2, optimize="optimal")
         return probs
 
-class QMRegression(GenericUnet):
+class QMRegression(GenericExperimentModel):
     
     def __init__(self, 
                 n_comp,
