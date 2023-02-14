@@ -1286,6 +1286,8 @@ class QMRegression(GenericExperimentModel):
     def get_model(self):
         if self.sigma_ini is None:
             sigma_ini = 1.0
+        else:
+            sigma_ini = self.sigma_ini
         model = QMRegressionModel(self.number_of_classes,
                                 self.n_comp,
                                 sigma_ini,
