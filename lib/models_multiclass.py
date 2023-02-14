@@ -3,10 +3,10 @@ tfkl = tf.keras.layers
 from tensorflow.keras.layers import Conv2D, Dropout, MaxPooling2D, Resizing, InputLayer, \
                                     Conv2DTranspose, Input, Flatten, concatenate, Lambda, Dense
 from tensorflow.keras.models import Model, Sequential
-import tensorflow as tf
+from keras.utils.layer_utils import count_params
+from sklearn.metrics import pairwise_distances
 from progressbar import progressbar as pbar
 from datetime import datetime
-from keras.utils.layer_utils import count_params
 import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib
@@ -1256,10 +1256,39 @@ class QMRegression(GenericExperimentModel):
     def produces_pixel_predictions(self):
         return False    
     
+    def init_model_params(self):
+        batch_size_backup = self.tr.batch_size
+        self.tr.batch_size = self.n_comp
+        self.tr.on_epoch_end()
+        gen_tr = iter(self.tr) 
+        tr_x, (tr_p, tr_l) = gen_tr.__next__()
+        tr_x, tr_l = self.normitem(tr_x, tr_l)
+        self.predict(tr_x)
+        x = self.train_model.backbone_model(tr_x)
+        x = tf.keras.layers.GlobalAveragePooling2D()(x)
+        x = self.train_model.dense1(x)
+        x = self.train_model.dense2(x)
+        self.train_model.kqmu.c_x.assign(x)
+        if self.sigma_ini is None:
+            distances = pairwise_distances(x)
+            sigma = np.mean(distances)
+            self.train_model.sigma.assign(sigma)
+            print(f"sigma: {sigma}")
+        #y = tf.concat([tr_p[:,2:3], 1. - tr_p[:,2:3]], axis=1)
+        #y = tf.gather(tr_p, self.metrics.class_ids, axis=1)
+        #self.kqmu.c_y.assign(y)
+        # restore val dataset config
+        self.tr.batch_size = batch_size_backup
+        self.tr.on_epoch_end()
+        return 
+
+
     def get_model(self):
+        if self.sigma_ini is None:
+            sigma_ini = 1.0
         model = QMRegressionModel(self.number_of_classes,
                                 self.n_comp,
-                                self.sigma_ini,
+                                sigma_ini,
                                 self.encoded_size,
                                 self.backbone,
                                 self.backbone_kwargs,
