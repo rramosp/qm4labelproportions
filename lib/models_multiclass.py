@@ -782,44 +782,6 @@ class PatchClassifierSegmentation(GenericExperimentModel):
         return f"patch_classifier_segm"
 
 
-class ConvolutionsRegression(GenericExperimentModel):
-    
-    def __init__(self, backbone, backbone_kwargs={'weights': None}, input_shape=(96,96,3)):
-        """
-        backbone: a class under tensorflow.keras.applications
-        """
-        self.backbone = backbone
-        self.backbone_kwargs = backbone_kwargs
-        self.input_shape = input_shape
-    
-    def get_wandb_config(self):
-        w = super().get_wandb_config()
-        w.update({'input_shape':self.input_shape,
-                    'backbone':self.backbone, 
-                    'backbone_kwargs': self.backbone_kwargs})
-        return w
-
-    def __get_name__(self):
-        r = f"convregr_{self.backbone.__name__}"
-
-        if 'weights' in self.backbone_kwargs.keys() and self.backbone_kwargs['weights'] is not None:
-            r += f"_{self.backbone_kwargs['weights']}"
-
-        return r
-
-    def produces_pixel_predictions(self):
-        return False    
-    
-    def get_model(self):
-        inputs = Input(self.input_shape)
-        backcone_output  = self.backbone(include_top=False, input_tensor=inputs, **self.backbone_kwargs)(inputs)
-        flat   = Flatten()(backcone_output)
-        dense1 = Dense(1024, activation="relu")(flat)
-        dense2 = Dense(1024, activation="relu")(dense1)
-        outputs = Dense(self.number_of_classes, activation='softmax')(dense2)
-        model = Model([inputs], [outputs])
-        return model
-
 from . import kqm 
 
 '''
