@@ -13,6 +13,7 @@ import matplotlib
 import wandb
 from . import data
 from . import metrics
+from .models.schedulers import *
 from rlxutils import subplots
 import segmentation_models as sm
 import seaborn as sns
@@ -33,40 +34,6 @@ def get_next_file_path(path, base_name, ext):
         if not os.path.exists(file_path):
             return file_path
         i += 1
-
-def scheduler_exp_decay(epoch, lr, start_epoch=0, decay=1, min_lr=0):
-    if epoch<start_epoch:
-        lr = lr
-    else:
-        lr = lr * tf.math.exp(-decay*0.01)
-    
-    return min_lr if lr<min_lr else lr
-
-def scheduler_binary(epoch, lr, period, lr1, lr2):
-    if (epoch//period)%2 == 0:
-        return lr1
-    else:
-        return lr2
-    
-def scheduler_periodic(epoch, lr, period, lrset):
-    lr_index = (epoch//period)%len(lrset)
-    return lrset[lr_index]
-
-def plot_schedule(init_lr, epochs, learning_rate_scheduler, learning_rate_scheduler_kwargs):
-    lr = init_lr
-    lrs = [lr]
-    learning_rate_scheduler_fn = eval(learning_rate_scheduler)
-    for epoch in range(1, epochs):
-        lr = learning_rate_scheduler_fn(
-                                         epoch, lr, 
-                                         **learning_rate_scheduler_kwargs
-                                        )
-        lrs.append(lr)
-        
-    plt.plot(lrs)
-    plt.grid()
-    plt.xlabel("epoch")
-    plt.ylabel("learning rate")
 
 class GenericExperimentModel:
 
@@ -358,6 +325,9 @@ class GenericExperimentModel:
 
         if self.loss_name in ['kldiv']:
             return self.metrics.kldiv(p, out)
+        
+        if self.loss_name in['ilogkldiv']:
+            return self.metrics.ilogkldiv(p, out)
 
         if self.loss_name in ['multiclass_LSRN_loss', 'lsrn']:
             return self.metrics.multiclass_LSRN_loss(p, out)
