@@ -400,7 +400,34 @@ class ProportionsMetrics:
                     axis=-1
                 )
         )
-        return r        
+        return r    
+
+    def ilogkldiv(self, true_proportions, y_pred):
+        """
+        computes the kl divergence between two proportions of labels
+        y_pred:  see y_pred in get_y_pred_as_proportions
+
+        returns: a float .
+        """
+
+        assert len(true_proportions.shape)==2 and true_proportions.shape[-1]==self.number_of_classes
+
+        # compute the proportions on prediction
+        proportions_y_pred = self.get_y_pred_as_proportions(y_pred, argmax = self.kldiv_proportions_argmax)
+        # compute mse using class weights
+        r = tf.reduce_mean(
+                -1 / (
+                    tf.math.log( 1e-5 + \
+                        tf.reduce_sum(
+                                    true_proportions \
+                                    * (tf.math.log(true_proportions + 1e-5) - tf.math.log(proportions_y_pred + 1e-5)) \
+                                    * self.class_weights_values, 
+                                axis=-1
+                            )
+                    )
+                )                    
+        )
+        return r         
         
     def multiclass_proportions_mae(self, true_proportions, y_pred, perclass=False):
         """

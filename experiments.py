@@ -170,7 +170,8 @@ def run_experiment(data_generator_split_method,
             interrupted = True
 
         try:
-            pcs.plot_val_sample(10); plt.show()
+            if pcs.produces_label_proportions():
+                pcs.plot_val_sample(10); plt.show()
             r = pcs.summary_result()
             csv_path = os.path.join(outdir, pcs.run_id + '.csv')
             r.to_csv(csv_path)

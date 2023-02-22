@@ -183,7 +183,7 @@ class Chip:
 
     def compute_label_proportions_on_chip_label(self):
         l = pd.Series(self.label.flatten()).value_counts() / 100**2
-        return {i: (l[i] if i in l.index else 0) for i in range(12)}
+        return {i: (l[i] if i in l.index else 0) for i in range(self.number_of_classes)}
 
     def get_polygon(self):
         """

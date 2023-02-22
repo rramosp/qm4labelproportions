@@ -157,6 +157,10 @@ class GenericExperimentModel:
         self.metrics_args = metrics_args
         self.outdir = outdir
         self.n_val_samples = n_val_samples
+
+        if self.losses_supported()!='all' and not self.loss_name in self.losses_supported():
+            raise ValueError(f"loss '{self.loss_name}' not supported in this model, only {self.losses_supported()} are supported")
+
         if not os.path.exists(outdir):
             os.makedirs(outdir)
 
@@ -219,6 +223,12 @@ class GenericExperimentModel:
     def produces_pixel_predictions(self):
         return True    
     
+    def produces_label_proportions(self):
+        return True    
+
+    def get_loss_components(self, p, out):
+        return None
+
     def get_val_sample(self, n=10):
         batch_size_backup = self.val.batch_size
         self.val.batch_size = n
@@ -226,7 +236,12 @@ class GenericExperimentModel:
         gen_val = iter(self.val) 
         val_x, (val_p, val_l) = gen_val.__next__()
         val_x,val_l = self.normitem(val_x,val_l)
-        val_out = self.predict(val_x).numpy()
+        val_out = self.predict(val_x)
+
+        if isinstance(val_out, list):
+            val_out = [i.numpy() for i in val_out]
+        else:
+            val_out = val_out.numpy()
 
         # restore val dataset config
         self.val.batch_size = batch_size_backup
@@ -241,7 +256,7 @@ class GenericExperimentModel:
         self.val.shuffle = shuffle
         
         n = len(val_x)
-        
+
         tval_out = np.argmax(val_out, axis=-1)
         cmap=matplotlib.colors.ListedColormap([plt.cm.gist_ncar(i/self.number_of_classes) \
                                                 for i in range(self.number_of_classes)])
@@ -315,8 +330,10 @@ class GenericExperimentModel:
     def __get_name__(self):
         raise NotImplementedError()
 
-
     def get_model(self):
+        raise NotImplementedError()
+    
+    def custom_loss(self, p, out):
         raise NotImplementedError()
 
     def get_loss(self, out, p, l): 
@@ -332,11 +349,17 @@ class GenericExperimentModel:
         if self.loss_name in ['multiclass_LSRN_loss', 'lsrn']:
             return self.metrics.multiclass_LSRN_loss(p, out)
         
+        if self.loss_name == 'custom':
+            return self.custom_loss(p, out)
+        
         raise ValueError(f"unkown loss '{self.loss_name}'")
 
     def predict(self, x):
         out = self.train_model(x)
         return out
+
+    def losses_supported(self):
+        return 'all'
 
     def get_trainable_variables(self):
         return self.train_model.trainable_variables
@@ -376,6 +399,7 @@ class GenericExperimentModel:
             
             # measure stuff on validation for reporting
             losses, ious, maeps, maeps_perclass = [], [], [], []
+            losses_components = {}
             max_value = np.min([len(self.val),self.n_batches_online_val ]).astype(int)
             self.val_classification_metrics = metrics.PixelClassificationMetrics(number_of_classes=self.number_of_classes)
             self.val_classification_metrics.reset_state()
@@ -385,27 +409,40 @@ class GenericExperimentModel:
                 x,l = self.normitem(x,l)
                 out = self.predict(x)
                 loss = self.get_loss(out,p,l).numpy()
+                
+                loss_components = self.get_loss_components(p, out)
+                if loss_components is not None:
+                    for k,v in loss_components.items():
+                        if not k in losses_components.keys():
+                            losses_components[k] = []
+                        losses_components[k].append(v)
+
+
                 losses.append(loss)
-                maeps.append(self.metrics.multiclass_proportions_mae_on_chip(l, out))
-                maeps_perclass.append(self.metrics.multiclass_proportions_mae_on_chip(l, out, perclass=True).numpy())
+                if self.produces_label_proportions():
+                    maeps.append(self.metrics.multiclass_proportions_mae_on_chip(l, out))
+                    maeps_perclass.append(self.metrics.multiclass_proportions_mae_on_chip(l, out, perclass=True).numpy())
                 if self.produces_pixel_predictions():
                     ious.append(self.metrics.compute_iou(l,out))
-
-                if self.produces_pixel_predictions():
                     self.val_classification_metrics.update_state(l,out)
                     
             # summarize validation stuff
+            txt_metrics = ""
             val_loss = np.mean(losses)
-            val_mean_mae = np.mean(maeps)
-            txt_metrics = f"mae {val_mean_mae:.5f}"
+            val_loss_components = {k: np.mean(v) for k,v in losses_components.items()}
+            if self.produces_label_proportions():
+                val_mean_mae = np.mean(maeps)
+                txt_metrics += f"mae {val_mean_mae:.5f}"
             if self.produces_pixel_predictions():
                 val_mean_f1 = np.mean(self.val_classification_metrics.result('f1', 'micro'))
                 val_mean_iou = np.mean(ious)
                 txt_metrics += f" f1 {val_mean_f1:.5f} iou {val_mean_iou:.5f}"
                 
             # assemble per class metrics
-            r = {'loss': np.mean(losses), 'maeprops_on_chip::global': np.mean(maeps)}
-            r.update({f'maeprops_on_chip::class_{k}':v for k,v in zip(range(0, self.number_of_classes), np.r_[maeps_perclass].mean(axis=0))})
+            r = {'loss': np.mean(losses)}
+            if self.produces_label_proportions():
+                r.update({'maeprops_on_chip::global': np.mean(maeps)})
+                r.update({f'maeprops_on_chip::class_{k}':v for k,v in zip(range(0, self.number_of_classes), np.r_[maeps_perclass].mean(axis=0))})
 
             if self.produces_pixel_predictions(): 
                 r['f1::global']  = self.val_classification_metrics.result('f1', 'micro').numpy()
@@ -436,10 +473,15 @@ class GenericExperimentModel:
             # log to wandb
             if self.wandb_project is not None:
                 log_dict["val/loss"] = val_loss
+
+                for k,v in val_loss_components:
+                    log_dict[f'val/{k}'] = v
+
                 if self.produces_pixel_predictions():
                     log_dict["val/f1"] = val_mean_f1
                     log_dict["val/iou"] = val_mean_iou
-                log_dict["val/maeprops_on_chip"] = val_mean_mae
+                if self.produces_label_proportions():
+                    log_dict["val/maeprops_on_chip"] = val_mean_mae
                 if self.learning_rate_scheduler_fn is not None:
                     log_dict['train/learning_rate'] = lr
          
@@ -449,7 +491,7 @@ class GenericExperimentModel:
                 txt_metrics += f" lr {lr:.7f}"
             # log to screen
             print (f"epoch {epoch:3d}, train loss {tr_loss:.5f}", flush=True)
-            print (f"epoch {epoch:3d},   val loss {val_loss:.5f} {txt_metrics}", flush=True)
+            print (f"epoch {epoch:3d},   val loss {val_loss:.5f} {txt_metrics} {val_loss_components}", flush=True)
 
     def summary_dataset(self, dataset_name):
         assert dataset_name in ['train', 'val', 'test']
@@ -474,11 +516,15 @@ class GenericExperimentModel:
                 self.summary_classification_metrics.update_state(l, out)
                 
             losses.append(self.get_loss(out,p,l).numpy())
-            maeps.append(self.metrics.multiclass_proportions_mae_on_chip(l, out).numpy())
-            mae_perclass.append(self.metrics.multiclass_proportions_mae_on_chip(l, out, perclass=True).numpy())
             
-        r = {'loss': np.mean(losses), 'maeprops_on_chip::global': np.mean(maeps)}
-        r.update({f'maeprops_on_chip::class_{k}':v for k,v in zip(range(0, self.number_of_classes), np.r_[mae_perclass].mean(axis=0))})
+            if self.produces_label_proportions():
+                maeps.append(self.metrics.multiclass_proportions_mae_on_chip(l, out).numpy())
+                mae_perclass.append(self.metrics.multiclass_proportions_mae_on_chip(l, out, perclass=True).numpy())
+            
+        r = {'loss': np.mean(losses) }
+        if self.produces_label_proportions():
+            r.update({'maeprops_on_chip::global': np.mean(maeps)})
+            r.update({f'maeprops_on_chip::class_{k}':v for k,v in zip(range(0, self.number_of_classes), np.r_[mae_perclass].mean(axis=0))})
 
         if self.produces_pixel_predictions(): 
             r['f1::global']  = self.summary_classification_metrics.result('f1', 'micro').numpy()
