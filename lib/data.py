@@ -554,7 +554,7 @@ class GeoDataGenerator(tf.keras.utils.Sequence):
 
     def on_epoch_end(self):
         'Updates indexes after each epoch'
-        if self.batch_size == 'per_partition':
+        if not isinstance(self.batch_size, int) and self.batch_size.startswith('per_partition'):
             self.indexes = np.arange(len(self.partitions_batches))
         else:
             self.indexes = np.arange(len(self.chips_basedirs))
@@ -564,7 +564,7 @@ class GeoDataGenerator(tf.keras.utils.Sequence):
 
     def __getitem__(self, index):
         'Generate one batch of data'
-        if self.batch_size == 'per_partition':
+        if not isinstance(self.batch_size, int) and self.batch_size.startswith('per_partition'):
             batch_chips_basedirs = self.partitions_batches.iloc[index].chip_id
 
         else:
