@@ -434,7 +434,7 @@ class GeoDataGenerator(tf.keras.utils.Sequence):
         if not isinstance(batch_size, int) and not batch_size.startswith('per_partition'):
             raise ValueError("batch_size must be int or the string 'per_partition'")
 
-        if batch_size.startswith('per_partition') and partitions_id=='aschip':
+        if not isinstance(batch_size, int) and batch_size.startswith('per_partition') and partitions_id=='aschip':
             raise ValueError("cannot have batch_size 'per_partition' and partitions_id 'aschip'")
 
         self.batch_size = batch_size
@@ -479,7 +479,7 @@ class GeoDataGenerator(tf.keras.utils.Sequence):
             self.number_of_output_classes = len(self.class_groups)+1
 
         self.max_batch_size = None
-        if self.batch_size.startswith('per_partition'):
+        if not isinstance(self.batch_size, int) and self.batch_size.startswith('per_partition'):
 
             if self.batch_size!='per_partition' and not self.batch_size.startswith('per_partition:max_batch_size='):
                 raise ValueError(f"batch size '{batch_size}' invalid")
@@ -547,7 +547,7 @@ class GeoDataGenerator(tf.keras.utils.Sequence):
 
     def __len__(self):
         'Denotes the number of batches per epoch'
-        if self.batch_size.startswith('per_partition'):
+        if not isinstance(self.batch_size, int) and self.batch_size.startswith('per_partition'):
             return len(self.partitions_batches)
         else:
             return int(np.floor(len(self.chips_basedirs) / self.batch_size))

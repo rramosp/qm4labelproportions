@@ -1180,24 +1180,49 @@ class AEQMPatchSegmentation(GenericExperimentModel):
         self.tr.on_epoch_end()
         return 
 
+from .models.classic import Conv2DBlock, DenseBlock
 class QMRegressionModel(tf.keras.Model):
-
+    '''
+    Quantum measurement regression model
+    Parameters
+    ----------
+    n_comp : int
+        Number of components of the KQM model
+    sigma_ini : float   
+        Initial value for sigma parameter of the RBF kernel (None for automatic)
+    backbone : str or tuple
+        Backbone model to use. If str, it must be a valid keras.applications model.
+        If tuple, it must be a tuple of (conv_layers, dense_layers)  
+        see Conv2DBlock and DenseBlock for example params
+    in_shape : tuple
+    '''
     def __init__(self, 
                 number_of_classes,
                 n_comp,
                 sigma_ini,
-                encoded_size=64,
-                backbone=tf.keras.applications.MobileNetV2,
-                backbone_kwargs={'weights': None},
+                backbone='vgg16',
                 in_shape=(96, 96, 3)):
         super().__init__()
         self.n_comp = n_comp
         self.sigma_ini = sigma_ini
-        self.encoded_size = encoded_size
         self.number_of_classes = number_of_classes
-        self.backbone_model = backbone(include_top=False, input_shape=in_shape, **backbone_kwargs)
-        self.dense1 = tf.keras.layers.Dense(512, activation='relu')
-        self.dense2 = tf.keras.layers.Dense(self.encoded_size, activation='relu')
+        self.backbone = backbone
+        if backbone == 'vgg16':
+            self.backbone_model = tf.keras.Sequential([
+                tf.keras.applications.vgg16.VGG16(include_top=False, input_shape=in_shape, weights='imagenet'),
+                tf.keras.layers.GlobalAveragePooling2D(),
+                tf.keras.layers.Dense(128, activation='relu')
+            ])
+            self.encoded_size = 128
+        elif type(backbone) == tuple:
+            self.conv_block = Conv2DBlock(self.backbone[0], start_n=1)
+            self.dense_block = DenseBlock(self.backbone[1], start_n=self.conv_block.end_n+1)
+            self.backbone_model = tf.keras.Sequential([self.conv_block,
+                                                       Flatten(name=f'{self.dense_block.end_n+1:02d}_flatten'),
+                                                       self.dense_block])
+            self.encoded_size = self.backbone[1][-1]['units']
+        else:
+            raise ValueError(f"Backbone {backbone} not supported")
         self.sigma = tf.Variable(self.sigma_ini, name="sigma", trainable=True)
         self.kernel_x = kqm.create_rbf_kernel(self.sigma)
         self.kqmu = kqm.KQMUnit(self.kernel_x,
@@ -1205,12 +1230,8 @@ class QMRegressionModel(tf.keras.Model):
                             dim_y=self.number_of_classes,
                             n_comp=self.n_comp
                             )
-
     def call(self, x):
         x = self.backbone_model(x)
-        x = tf.keras.layers.GlobalAveragePooling2D()(x)
-        x = self.dense1(x)
-        x = self.dense2(x)
         rho_x = kqm.pure2dm(x)
         rho_y = self.kqmu(rho_x)
         y_w, y_v = kqm.dm2comp(rho_y)
@@ -1224,37 +1245,30 @@ class QMRegression(GenericExperimentModel):
     def __init__(self, 
                 n_comp,
                 sigma_ini,
-                encoded_size=64,
-                backbone=tf.keras.applications.MobileNetV2,
-                backbone_kwargs={'weights': None},
+                backbone='vgg16',
                 input_shape=(96,96,3)):
         """
-        backbone: a class under tensorflow.keras.applications
+        backbone: check documentation of QMRegressionModel
         """
         self.n_comp = n_comp
         self.sigma_ini = sigma_ini
-        self.encoded_size = encoded_size
         self.backbone = backbone
-        self.backbone_kwargs = backbone_kwargs
         self.input_shape = input_shape
     
     def get_wandb_config(self):
         w = super().get_wandb_config()
         w.update({'input_shape':self.input_shape,
                     'backbone':self.backbone, 
-                    'backbone_kwargs': self.backbone_kwargs,
                     'n_comp': self.n_comp,
                     'sigma_ini': self.sigma_ini,
-                    'encoded_size': self.encoded_size
                     })
         return w
 
     def __get_name__(self):
-        r = f"qmreg_{self.backbone.__name__}"
-
-        if 'weights' in self.backbone_kwargs.keys() and self.backbone_kwargs['weights'] is not None:
-            r += f"_{self.backbone_kwargs['weights']}"
-
+        if type(self.backbone) == str:
+            r = f"qmreg_{self.backbone}"
+        else:
+            r = f"qmreg_customconv"
         return r
 
     def produces_pixel_predictions(self):
@@ -1269,9 +1283,6 @@ class QMRegression(GenericExperimentModel):
         tr_x, tr_l = self.normitem(tr_x, tr_l)
         self.predict(tr_x)
         x = self.train_model.backbone_model(tr_x)
-        x = tf.keras.layers.GlobalAveragePooling2D()(x)
-        x = self.train_model.dense1(x)
-        x = self.train_model.dense2(x)
         self.train_model.kqmu.c_x.assign(x)
         if self.sigma_ini is None:
             distances = pairwise_distances(x)
@@ -1295,8 +1306,6 @@ class QMRegression(GenericExperimentModel):
         model = QMRegressionModel(self.number_of_classes,
                                 self.n_comp,
                                 sigma_ini,
-                                self.encoded_size,
                                 self.backbone,
-                                self.backbone_kwargs,
                                 self.input_shape)
         return model

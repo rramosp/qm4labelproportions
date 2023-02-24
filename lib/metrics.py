@@ -146,7 +146,8 @@ def pnorm(v,p):
     v: a batch of vectors of shape [num_vectors, vector_length]
     p: the p of the norm, can be < 1
     """
-    return tf.math.pow(tf.reduce_sum(tf.math.pow(np.r_[v], p), axis=-1), 1/p)
+    #return tf.math.pow(tf.reduce_sum(tf.math.pow(np.r_[v], p), axis=-1), 1/p)
+    return tf.norm(v, ord=p, axis=-1)
 
 
 def plot_confusion_matrix(cm):
