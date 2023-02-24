@@ -267,7 +267,7 @@ class Custom_ConvolutionsRegression(GenericExperimentModel):
             
         if self.dense_layers is not None:
             self.dense_block = DenseBlock(self.dense_layers, start_n=self.conv_block.end_n+1)
-            x = Flatten(name=f'{n:02d}_flatten')(x)  
+            x = Flatten(name=f'{self.dense_block.end_n+1:02d}_flatten')(x)  
             x = self.dense_block(x)
             outputs = Dense(self.number_of_classes, activation='softmax', name="probabilities")(x)
         else:
@@ -378,3 +378,61 @@ class Custom_SeparatedConvolutionsRegression(GenericExperimentModel):
 
 
     
+class Custom_DownsamplingSegmentation(GenericExperimentModel):
+
+    """
+    segmentation on a lower dimension image after a few convolutions
+    """
+    def __init__(self, 
+                 input_shape=(96,96,3),
+                 conv_layers = [
+                     dict(kernel_size=6, filters=3, activation='relu', padding='same', dropout=0.1, maxpool=2),
+                     dict(kernel_size=6, filters=3, activation='relu', dropout=0.1, maxpool=2)
+                 ],
+                 use_alexnet_weights = False
+                 ):
+        """
+        see Conv2DBlock and DenseBlock for example params
+        """
+        self.input_shape = input_shape
+        self.conv_layers = conv_layers.copy()
+        self.use_alexnet_weights = use_alexnet_weights
+    
+    def get_wandb_config(self):
+        w = super().get_wandb_config()
+        w.update({'input_shape':self.input_shape,
+                  'conv_layers': self.conv_layers,
+                  'use_alexnet_weights': self.use_alexnet_weights})
+        return w
+
+    def __get_name__(self):
+        r = f"downconvsegm_{len(self.conv_layers)}conv"
+        return r
+
+    def produces_pixel_predictions(self):
+        return True    
+    
+    def get_model(self):
+        
+        inputs = Input(shape=self.input_shape)
+
+        self.conv_block = Conv2DBlock(self.conv_layers, start_n=1)
+            
+        x = self.conv_block(inputs)
+        outputs = Conv2D(kernel_size=1, 
+                         filters=self.number_of_classes, 
+                         activation='softmax', 
+                         strides=1, 
+                         name='output')(x)            
+        
+        model = Model([inputs],[outputs])
+        
+        if self.use_alexnet_weights:
+            # if use alexnet, set weights to first conv layer
+            print ("setting alexnet weights", flush=True)
+            w = model.get_weights()
+            walex = get_alexnet_weights(kernel_size=self.conv_layers[0]['kernel_size'])
+            w[0] = walex[:,:,:, :w[0].shape[-1]]
+            model.set_weights(w)         
+
+        return model
