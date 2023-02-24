@@ -336,6 +336,7 @@ class GenericExperimentModel:
     def custom_loss(self, p, out):
         raise NotImplementedError()
 
+    @tf.function
     def get_loss(self, out, p, l): 
         if self.loss_name in ['multiclass_proportions_mse', 'mse']:
             return self.metrics.multiclass_proportions_mse(p, out)
@@ -354,6 +355,7 @@ class GenericExperimentModel:
         
         raise ValueError(f"unkown loss '{self.loss_name}'")
 
+    @tf.function
     def predict(self, x):
         out = self.train_model(x)
         return out
@@ -363,6 +365,21 @@ class GenericExperimentModel:
 
     def get_trainable_variables(self):
         return self.train_model.trainable_variables
+
+    @tf.function
+    def predict_get_loss(self, x, p, l):
+        out = self.predict(x)
+        loss = self.get_loss(out,p,l)
+        return loss, out
+
+    @tf.function
+    def apply_model_and_compute_gradients(self, x,p,l):
+        with tf.GradientTape() as t:
+            out = self.train_model(x)
+            loss = self.get_loss(out,p,l)
+        grads = t.gradient(loss, self.get_trainable_variables())
+        self.opt.apply_gradients(zip(grads, self.get_trainable_variables()))     
+        return loss   
 
     def fit(self, epochs=10, max_steps=np.inf):
         run_file_path = os.path.join(self.outdir, self.run_id + ".h5")            
@@ -383,16 +400,21 @@ class GenericExperimentModel:
 
             losses = []
             for step_nb,(x,(p,l)) in enumerate(pbar(self.tr)):
+                if len(x)==0:
+                    continue
                 # trim to unet input shape
                 x,l = self.normitem(x,l)
                 # compute loss
+                loss = self.apply_model_and_compute_gradients(x,p,l)
+                losses.append(loss)
+                """
                 with tf.GradientTape() as t:
                     out = self.train_model(x)
                     loss = self.get_loss(out,p,l)
                 grads = t.gradient(loss, self.get_trainable_variables())
                 self.opt.apply_gradients(zip(grads, self.get_trainable_variables()))
                 losses.append(loss.numpy())
-
+                """
             log_dict = {}
             tr_loss = np.mean(losses)
             log_dict['train/loss'] = tr_loss
@@ -409,7 +431,6 @@ class GenericExperimentModel:
                 x,l = self.normitem(x,l)
                 out = self.predict(x)
                 loss = self.get_loss(out,p,l).numpy()
-                
                 loss_components = self.get_loss_components(p, out)
                 if loss_components is not None:
                     for k,v in loss_components.items():
@@ -508,6 +529,8 @@ class GenericExperimentModel:
         self.summary_classification_metrics = metrics.PixelClassificationMetrics(number_of_classes=self.number_of_classes)
         self.summary_classification_metrics.reset_state()
         for x, (p,l) in pbar(dataset):
+            if len(x)==0:
+                continue            
             x,l = self.normitem(x,l)
             out = self.predict(x)
             if self.produces_pixel_predictions():
@@ -775,11 +798,14 @@ class PatchClassifierSegmentation(GenericExperimentModel):
         patch_extr = Patches(self.patch_size, 96, self.pred_strides)
         patches = patch_extr(inputs)
         # Process x using the module blocks.
-        x = tf.keras.layers.Dense(self.num_units, activation="gelu")(patches)
+        x = tf.keras.layers.Dense(self.num_units, activation="elu", name='dense_on_patches')(patches)
+        print("dense_on_patches output", x.shape)
+
         # Apply dropout.
-        x = tf.keras.layers.Dropout(rate=self.dropout_rate)(x)
+        if self.dropout_rate!=0:
+            x = tf.keras.layers.Dropout(rate=self.dropout_rate)(x)
         # Label proportions prediction layer
-        probs = tf.keras.layers.Dense(self.number_of_classes, activation="softmax")(x)
+        probs = tf.keras.layers.Dense(self.number_of_classes, activation="softmax", name="patch_output")(x)
         probs = tf.reshape(probs, [-1, patch_extr.num_patches, patch_extr.num_patches, self.number_of_classes])
         out = probs
         # Construct image from label proportions
