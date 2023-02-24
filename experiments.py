@@ -161,7 +161,13 @@ def run_experiment(data_generator_split_method,
 
         interrupted = False    
         try:
-            pcs.fit(epochs=epochs)
+            import warnings
+            with warnings.catch_warnings():
+                warnings.filterwarnings('error')
+                try:
+                    pcs.fit(epochs=epochs)
+                except RuntimeWarning:
+                    raise ValueError('runtime warning')
         except KeyboardInterrupt:
             print ("-----------------------------------------------------------------------------")
             print ("keyboard interrupt. saving summary. access model in 'experiments.saved_model'")

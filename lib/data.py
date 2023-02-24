@@ -13,8 +13,16 @@ import pathlib
 import geopandas as gpd
 from progressbar import progressbar as pbar
 import hashlib
+from itertools import islice
 
-
+def batched(iterable, n):
+    "Batch data into tuples of length n. The last batch may be shorter."
+    # batched('ABCDEFG', 3) --> ABC DEF G
+    if n < 1:
+        raise ValueError('n must be at least one')
+    it = iter(iterable)
+    while (batch := tuple(islice(it, n))):
+        yield batch
 
 def gethash(s: str):
     k = int(hashlib.sha256(s.encode('utf-8')).hexdigest(), 16) % 10**15
@@ -417,13 +425,16 @@ class GeoDataGenerator(tf.keras.utils.Sequence):
         """
         class_groups: see Chip.group_classes
         batch_size: can use 'per_partition' instead of int to make batches with chips
-                    falling in the same partition
+                    falling in the same partition. in this case, you can use 
+                    'per_partition:max_batch_size=16' to limit the size of batches.
+                    larger batches will be split into smaller ones with max_batch_size.
+
         """
 
-        if not isinstance(batch_size, int) and batch_size!='per_partition':
+        if not isinstance(batch_size, int) and not batch_size.startswith('per_partition'):
             raise ValueError("batch_size must be int or the string 'per_partition'")
 
-        if batch_size == 'per_partition' and partitions_id=='aschip':
+        if batch_size.startswith('per_partition') and partitions_id=='aschip':
             raise ValueError("cannot have batch_size 'per_partition' and partitions_id 'aschip'")
 
         self.batch_size = batch_size
@@ -467,10 +478,16 @@ class GeoDataGenerator(tf.keras.utils.Sequence):
         else:
             self.number_of_output_classes = len(self.class_groups)+1
 
-        if self.batch_size == 'per_partition':
-            self.load_partitions_map()
+        self.max_batch_size = None
+        if self.batch_size.startswith('per_partition'):
 
-        if self.batch_size == 'per_partition':
+            if self.batch_size!='per_partition' and not self.batch_size.startswith('per_partition:max_batch_size='):
+                raise ValueError(f"batch size '{batch_size}' invalid")
+            
+            if self.batch_size.startswith('per_partition:max_batch_size='):
+                self.max_batch_size = int(batch_size.split("=")[-1])
+
+            self.load_partitions_map()
             info = ". loaded partitions map"
         else:
             info = ""
@@ -497,9 +514,30 @@ class GeoDataGenerator(tf.keras.utils.Sequence):
             if self.save_partitions_map:    
                 r.to_csv(partitions_map_file, index=False)
             
+        colname = f'partitions_{self.partitions_id}'
         self.partitions_map = r
-        self.partitions_batches = self.partitions_map.groupby(f'partitions_{self.partitions_id}')[['chip_id']].agg(lambda x: list(x))
-        
+        self.partitions_batches = self.partitions_map.groupby(colname)[['chip_id']].agg(lambda x: list(x))
+        self.partitions_batches[colname] = self.partitions_batches.index
+        self.partitions_batches.index = range(len(self.partitions_batches))
+
+        # split batches if max_batch_size was specified
+        if self.max_batch_size is not None:
+            indexes_to_delete = []
+            rows_to_add = []
+
+            for idx,t in self.partitions_batches.iterrows():
+                if len(t.chip_id)>self.max_batch_size:
+                    for s in batched(t.chip_id, self.max_batch_size):
+                        r = t.copy()
+                        r['chip_id'] = list(s)
+                        rows_to_add.append(r)
+                    indexes_to_delete.append(idx)
+
+            r = pd.concat([self.partitions_batches.drop(indexes_to_delete),
+                        pd.DataFrame(rows_to_add)])
+            r.index = range(len(r))
+            self.partitions_batches = r
+
 
     def get_number_of_input_classes(self):
         return 12
@@ -509,7 +547,7 @@ class GeoDataGenerator(tf.keras.utils.Sequence):
 
     def __len__(self):
         'Denotes the number of batches per epoch'
-        if self.batch_size == 'per_partition':
+        if self.batch_size.startswith('per_partition'):
             return len(self.partitions_batches)
         else:
             return int(np.floor(len(self.chips_basedirs) / self.batch_size))
