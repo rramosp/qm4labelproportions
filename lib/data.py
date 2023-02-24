@@ -41,7 +41,11 @@ class Chipset:
     def random(self):
         file = np.random.choice(self.files)
         return Chip(f"{self.basedir}/{file}", number_of_classes=self.number_of_classes)
-        
+    
+    def get_chip(self, chip_id):
+        file = f'{self.basedir}/{chip_id}.pkl'
+        return Chip(file, number_of_classes=self.number_of_classes)
+
 class Chip:
     def __init__(self, filename=None, number_of_classes=None):
 
@@ -179,7 +183,7 @@ class Chip:
 
     def compute_label_proportions_on_chip_label(self):
         l = pd.Series(self.label.flatten()).value_counts() / 100**2
-        return {i: (l[i] if i in l.index else 0) for i in range(12)}
+        return {i: (l[i] if i in l.index else 0) for i in range(self.number_of_classes)}
 
     def get_polygon(self):
         """

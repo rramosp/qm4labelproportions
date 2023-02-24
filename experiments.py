@@ -131,76 +131,86 @@ def run_experiment(data_generator_split_method,
                    learning_rate_scheduler = None,
                    learning_rate_scheduler_kwargs = None
                    ):
-    print ("\n---------", data_generator_split_args['partitions_id'], "------------")
-    print ("using loss", loss) 
-
-    pcs = model_class(**init_args)
-
-    print ("-----", psutil.virtual_memory())
-    pcs.init_run(data_generator_split_method = data_generator_split_method,
-                 data_generator_split_args = data_generator_split_args,
-                 outdir=outdir,
-                 learning_rate=learning_rate, 
-                 loss=loss,
-                 wandb_project = wproject,
-                 wandb_entity = wentity,
-                 class_weights = class_weights,
-                 n_batches_online_val=n_batches_online_val,
-                 log_perclass = log_perclass,
-                 log_imgs = log_imgs,
-                 log_confusion_matrix = log_confusion_matrix,
-                 metrics_args = metrics_args,
-                 learning_rate_scheduler = learning_rate_scheduler,
-                 learning_rate_scheduler_kwargs = learning_rate_scheduler_kwargs 
-                 )
-    if wproject is not None:
-        wandb.run.tags = wandb.run.tags + tuple(wandb_tags)             
-    print ("-----", psutil.virtual_memory())
-
-    interrupted = False    
-    try:
-        pcs.fit(epochs=epochs)
-    except KeyboardInterrupt:
-        print ("-----------------------------------------------------------------------------")
-        print ("keyboard interrupt. saving summary. access model in 'experiments.saved_model'")
-        print ("please wait for summary, or ctrl-c again to interrupt")
-        print ("-----------------------------------------------------------------------------")
-        global saved_model
-        saved_model = pcs
-        interrupted = True
 
     try:
-        pcs.plot_val_sample(10); plt.show()
-        r = pcs.summary_result()
-        csv_path = os.path.join(outdir, pcs.run_id + '.csv')
-        r.to_csv(csv_path)
+        print ("\n---------", data_generator_split_args['partitions_id'], "------------")
+        print ("using loss", loss) 
+
+        pcs = model_class(**init_args)
+
+        print ("-----", psutil.virtual_memory())
+        pcs.init_run(data_generator_split_method = data_generator_split_method,
+                    data_generator_split_args = data_generator_split_args,
+                    outdir=outdir,
+                    learning_rate=learning_rate, 
+                    loss=loss,
+                    wandb_project = wproject,
+                    wandb_entity = wentity,
+                    class_weights = class_weights,
+                    n_batches_online_val=n_batches_online_val,
+                    log_perclass = log_perclass,
+                    log_imgs = log_imgs,
+                    log_confusion_matrix = log_confusion_matrix,
+                    metrics_args = metrics_args,
+                    learning_rate_scheduler = learning_rate_scheduler,
+                    learning_rate_scheduler_kwargs = learning_rate_scheduler_kwargs 
+                    )
         if wproject is not None:
-            config = {}
-            for part in ['train', 'val', 'test']:
-                config[f"mae::{part}"] = r[part]['maeprops_on_chip global']
-                if pcs.produces_pixel_predictions():
-                    config[f"f1::{part}"] = r[part]['f1 global']
-                    config[f"iou::{part}"] = r[part]['iou global']
-            wandb.config.update(config)
-        params_path = os.path.join(outdir, pcs.run_id + ".params")
-        with open(params_path, 'w') as f:
-            f.write(repr(pcs.get_wandb_config()))
-        pcs.empty_caches()
-        
-        print ("--------")
-        print (r[[i=='loss' or 'global' in i for i in r.index]])
-        print ("--------")
-        print (r[[i!='loss' and 'global' not in i for i in r.index]])
-        print ("--------")
-        wandb.finish(quiet=True)
+            wandb.run.tags = wandb.run.tags + tuple(wandb_tags)             
+        print ("-----", psutil.virtual_memory())
 
-    except KeyboardInterrupt:
-        interrupted = True
+        interrupted = False    
+        try:
+            pcs.fit(epochs=epochs)
+        except KeyboardInterrupt:
+            print ("-----------------------------------------------------------------------------")
+            print ("keyboard interrupt. saving summary. access model in 'experiments.saved_model'")
+            print ("please wait for summary, or ctrl-c again to interrupt")
+            print ("-----------------------------------------------------------------------------")
+            global saved_model
+            saved_model = pcs
+            interrupted = True
 
-    if interrupted:
-        print ("-----------------------------------------------------------------------")
-        print ("waiting 10secs. ctrl-c again if you want to completely interrupt")
-        print ("-----------------------------------------------------------------------")
-        sleep(10)
+        try:
+            if pcs.produces_label_proportions():
+                pcs.plot_val_sample(10); plt.show()
+            r = pcs.summary_result()
+            csv_path = os.path.join(outdir, pcs.run_id + '.csv')
+            r.to_csv(csv_path)
+            if wproject is not None:
+                config = {}
+                for part in ['train', 'val', 'test']:
+                    config[f"mae::{part}"] = r[part]['maeprops_on_chip global']
+                    if pcs.produces_pixel_predictions():
+                        config[f"f1::{part}"] = r[part]['f1 global']
+                        config[f"iou::{part}"] = r[part]['iou global']
+                wandb.config.update(config)
+            params_path = os.path.join(outdir, pcs.run_id + ".params")
+            with open(params_path, 'w') as f:
+                f.write(repr(pcs.get_wandb_config()))
+            pcs.empty_caches()
+            
+            print ("--------")
+            print (r[[i=='loss' or 'global' in i for i in r.index]])
+            print ("--------")
+            print (r[[i!='loss' and 'global' not in i for i in r.index]])
+            print ("--------")
+            wandb.finish(quiet=True)
+
+        except KeyboardInterrupt:
+            interrupted = True
+
+        if interrupted:
+            wandb.finish()
+            print ("-----------------------------------------------------------------------")
+            print ("waiting 10secs. ctrl-c again if you want to completely interrupt")
+            print ("-----------------------------------------------------------------------")
+            sleep(10)
+            print ("done")
+
+    except Exception as e:
+        print ("intercepting exception to finish wandb", flush=True)
+        wandb.finish()
+        raise e
 
     return pcs
