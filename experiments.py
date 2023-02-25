@@ -56,6 +56,7 @@ def parameter_sweep(
                    n_batches_online_val = np.inf,
                    log_imgs=False,
                    log_perclass=False,
+                   log_confusion_matrix=False, 
                    metrics_args={},
                    wandb_tags=[]):
     '''
@@ -101,6 +102,7 @@ def parameter_sweep(
                    n_batches_online_val=n_batches_online_val,
                    log_imgs=log_imgs,
                    log_perclass=log_perclass,
+                   log_confusion_matrix = log_confusion_matrix,
                    metrics_args=metrics_args,
                    wandb_tags=wandb_tags
                   )
