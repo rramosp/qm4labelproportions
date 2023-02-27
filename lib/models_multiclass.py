@@ -775,6 +775,7 @@ class PatchClassifierSegmentation(GenericExperimentModel):
                      pred_strides,
                      num_units,
                      dropout_rate,
+                     activation='relu',
                      convolve_transpose_output = False):
         self.input_shape = input_shape
         self.patch_size = patch_size 
@@ -782,6 +783,7 @@ class PatchClassifierSegmentation(GenericExperimentModel):
         self.num_units = num_units
         self.dropout_rate = dropout_rate
         self.convolve_transpose_output = convolve_transpose_output
+        self.activation = activation
 
     def get_wandb_config(self):
         w = super().get_wandb_config()
@@ -798,7 +800,7 @@ class PatchClassifierSegmentation(GenericExperimentModel):
         patch_extr = Patches(self.patch_size, 96, self.pred_strides)
         patches = patch_extr(inputs)
         # Process x using the module blocks.
-        x = tf.keras.layers.Dense(self.num_units, activation="elu", name='dense_on_patches')(patches)
+        x = tf.keras.layers.Dense(self.num_units, activation=self.activation, name='dense_on_patches')(patches)
         print("dense_on_patches output", x.shape)
 
         # Apply dropout.

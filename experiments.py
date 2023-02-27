@@ -129,7 +129,8 @@ def run_experiment(data_generator_split_method,
                    metrics_args = {},
                    wandb_tags = [],
                    learning_rate_scheduler = None,
-                   learning_rate_scheduler_kwargs = None
+                   learning_rate_scheduler_kwargs = None,
+                   model_spec_str = None
                    ):
 
     try:
@@ -156,18 +157,17 @@ def run_experiment(data_generator_split_method,
                     learning_rate_scheduler_kwargs = learning_rate_scheduler_kwargs 
                     )
         if wproject is not None:
-            wandb.run.tags = wandb.run.tags + tuple(wandb_tags)             
+            wandb.run.tags = wandb.run.tags + tuple(wandb_tags)
+            if model_spec_str is not None:
+                wandb.config.update({'model_spec': model_spec_str})    
         print ("-----", psutil.virtual_memory())
 
         interrupted = False    
         try:
-            import warnings
-            with warnings.catch_warnings():
-                warnings.filterwarnings('error')
-                try:
-                    pcs.fit(epochs=epochs)
-                except RuntimeWarning:
-                    raise ValueError('runtime warning')
+            try:
+                pcs.fit(epochs=epochs)
+            except RuntimeWarning:
+                raise ValueError('runtime warning')
         except KeyboardInterrupt:
             print ("-----------------------------------------------------------------------------")
             print ("keyboard interrupt. saving summary. access model in 'experiments.saved_model'")
