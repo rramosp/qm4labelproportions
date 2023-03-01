@@ -986,11 +986,15 @@ class QMPatchSegmentation(GenericExperimentModel):
             return tf.keras.losses.mse(out,p)
     '''
     def get_model(self):
+        if self.sigma_ini is None:
+            sigma_ini = 1.0
+        else:
+            sigma_ini = self.sigma_ini
         train_model = QMPatchSegmModel(self.number_of_classes,
                                         self.patch_size,
                                         self.pred_strides,
                                         self.n_comp,
-                                        self.sigma_ini,
+                                        sigma_ini,
                                         self.deep)
         return train_model
 
@@ -1144,12 +1148,16 @@ class AEQMPatchSegmentation(GenericExperimentModel):
         return f"AE_KQM_classifier"
 
     def get_model(self):
+        if self.sigma_ini is None:
+            sigma_ini = 1.0
+        else:
+            sigma_ini = self.sigma_ini
         train_model = AEQMPatchSegmModel(
                                         self.number_of_classes,
                                         self.patch_size,
                                         self.pred_strides,
                                         self.n_comp,
-                                        self.sigma_ini,
+                                        sigma_ini,
                                         self.encoded_size)
         return train_model
 
