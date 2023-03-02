@@ -1275,7 +1275,7 @@ class QMRegression(GenericExperimentModel):
 
     def produces_pixel_predictions(self):
         return False    
-    
+
     def init_model_params(self):
         batch_size_backup = self.tr.batch_size
         self.tr.batch_size = self.n_comp
