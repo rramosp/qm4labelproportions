@@ -81,7 +81,7 @@ def get_autoinit_spec(obj):
     be instantiated again.
     """
     if not 'init_args' in dir(obj):
-        raise ValueError(f"object {obj} was not initialized with @autoinit")
+        raise ValueError(f"object {obj} was not initialized with autoinit")
     
     spec = {'init_args': obj.init_args,
             'class_name': obj.__class__.__name__,

@@ -185,7 +185,10 @@ class Run:
         val_x, (val_p, val_l) = gen_val.__next__()
         val_x,val_l = self.normitem(val_x,val_l)
         val_out = self.model(val_x)
-        val_out_segmentation = self.model.predict_segmentation(val_x)
+        if self.model.produces_segmentation_probabilities():
+            val_out_segmentation = self.model.predict_segmentation(val_x)
+        else:
+            val_out_segmentation = None
 
         if isinstance(val_out, list):
             val_out = [i.numpy() for i in val_out]
@@ -553,8 +556,8 @@ class Run:
             losses.append(self.get_loss(out,p,l).numpy())
             
             if self.model.produces_label_proportions():
-                maeps.append(self.metrics.multiclass_proportions_mae_on_chip(l, out_segmentation).numpy())
-                mae_perclass.append(self.metrics.multiclass_proportions_mae_on_chip(l, out_segmentation, perclass=True).numpy())
+                maeps.append(self.metrics.multiclass_proportions_mae_on_chip(l, out).numpy())
+                mae_perclass.append(self.metrics.multiclass_proportions_mae_on_chip(l, out, perclass=True).numpy())
             
         r = {'loss': np.mean(losses) }
         if self.model.produces_label_proportions():

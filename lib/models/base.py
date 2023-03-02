@@ -43,7 +43,7 @@ class BaseModel(Model):
         # just after model.call.
 
         if not self.produces_segmentation_probabilities():
-            raise ValueError(f"model {self.__class__.__name__} does not produce pixel predictions")
+            raise ValueError(f"model {self.__class__.__name__} does not produce segmentations")
 
         if 'last_x' in dir(self) and 'last_out' in dir(self) and x is self.last_x:
             return self.last_out

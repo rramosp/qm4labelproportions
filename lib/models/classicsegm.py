@@ -1,70 +1,11 @@
 import tensorflow as tf
 from tensorflow.keras import Model
+import segmentation_models as sm
+
 from .base import *
 from ..utils.autoinit import *
 from ..components.classic import *
 
-
-class Custom_ConvolutionsRegressionModel(BaseModel):
-    
-    def __init__(self, 
-                 conv_layers, 
-                 dense_layers, 
-                 use_alexnet_weights=False, 
-                 number_of_classes = None):
-        """
-        see Conv2DBlock and DenseBlock for example params
-        """
-        super().__init__()
-        autoinit(self)
-
-    def build(self, input_shape):
-        
-        self.conv_block = Conv2DBlock(self.conv_layers, start_n=1, use_alexnet_weights=self.use_alexnet_weights)
-                        
-        if self.dense_layers is not None:
-            self.dense_block = DenseBlock(self.dense_layers, start_n=self.conv_block.end_n+1)
-            self.flatten = Flatten(name=f'{self.dense_block.end_n+1:02d}_flatten')
-            self.output_layer = Dense(self.number_of_classes, activation='softmax', name="probabilities")
-        else:
-            # if there are no dense layers, adds a conv layer with softmax with n_classes 1x1 filters so 
-            # that each output pixel outputs a probability distribution. then the probability 
-            # distributions of all output pixels are averaged to obtain a single output probability 
-            # distribution per input image.
-            self.output_layer = Conv2D(kernel_size=1, filters=self.number_of_classes, activation='softmax', strides=1, name='probabilities')            
-        
-    def call(self, x):
-        x = self.conv_block(x)
-            
-        if self.dense_layers is not None:
-            x = self.dense_block(x)
-            x = self.flatten(x)
-            x = self.output_layer(x)
-        else:
-            x = self.output_layer(x)
-            x = tf.reduce_mean(x, axis=[1,2])
-
-        return x
-    
-    def get_name(self):
-        if self.dense_layers is None:
-            r = f"convregr_nofc_{len(self.conv_layers)}conv"
-        else:
-            r = f"convregr_{len(self.conv_layers)}conv_{len(self.dense_layers)}dense"
-        return r
-
-    def produces_segmentation_probabilities(self):
-        return False    
-    
-    def produces_label_proportions(self):
-        return True
-
-    def get_wandb_config(self, wandb_config):
-        w = super().get_wandb_config(wandb_config)
-        w.update({'conv_layers': self.conv_layers,
-                  'dense_layers': self.dense_layers,
-                  'use_alexnet_weights': self.use_alexnet_weights})
-        return w
 
 class Custom_DownsamplingSegmentation(BaseModel):
 
@@ -203,3 +144,38 @@ class Custom_UnetSegmentation(BaseModel):
 
     def produces_label_proportions(self):
         return True
+
+
+class SM_UnetSegmentation(BaseModel):
+
+    def __init__(self, number_of_classes, sm_keywords):
+        super().__init__()
+        autoinit(self)
+        self.backbone = self.sm_keywords['backbone_name']
+
+    def produces_segmentation_probabilities(self):
+        return True    
+
+    def produces_label_proportions(self):
+        return True
+
+    def build(self, input_shape):
+        self.unet = sm.Unet(input_shape=(None,None,3), 
+                            classes = self.number_of_classes, 
+                            activation = 'softmax',
+                            **self.sm_keywords)
+
+        inp = tf.keras.layers.Input(shape=(None, None, 3))
+        out = self.unet(inp)
+        self.model   = tf.keras.models.Model([inp], [out])
+        
+    def call(self, x):
+        return self.model(x)
+
+    def get_name(self):
+        r = f"segmnt_{self.backbone}"
+
+        if 'encoder_weights' in self.sm_keywords.keys() and self.sm_keywords['encoder_weights'] is not None:
+            r += f"_{self.sm_keywords['encoder_weights']}"
+
+        return r

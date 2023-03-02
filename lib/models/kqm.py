@@ -1,6 +1,7 @@
 import tensorflow as tf
 tfkl = tf.keras.layers
 import numpy as np
+from sklearn.metrics import pairwise_distances
 
 from ..components import kqm as kqmcomps
 from ..components.classic import Conv2DBlock, DenseBlock
@@ -127,10 +128,10 @@ class QMPatchSegmentation(BaseModel):
     
 
 
-    '''
+'''
 A class that implements an Autoencoder KQM Segmentation model as a Keras model.
 '''
-class AEQMPatchSegmModel(BaseModel):
+class AEQMPatchSegm(BaseModel):
     def __init__(self, 
                 number_of_classes,
                 patch_size, 
@@ -245,3 +246,99 @@ class AEQMPatchSegmModel(BaseModel):
         out = tf.concat(outs, axis=3)
         return out
 
+
+
+class QMRegression(BaseModel):
+    '''
+    Quantum measurement regression model
+    Parameters
+    ----------
+    n_comp : int
+        Number of components of the KQM model
+    sigma_ini : float   
+        Initial value for sigma parameter of the RBF kernel (None for automatic)
+    backbone : str or tuple
+        Backbone model to use. If str, it must be a valid keras.applications model.
+        If tuple, it must be a tuple of (conv_layers, dense_layers)  
+        see Conv2DBlock and DenseBlock for example params
+    in_shape : tuple
+    '''
+    def __init__(self, 
+                number_of_classes,
+                n_comp,
+                sigma_ini,
+                backbone='vgg16',
+                in_shape=(96, 96, 3)):
+        super().__init__()
+        autoinit(self)
+        if backbone == 'vgg16':
+            self.backbone_model = tf.keras.Sequential([
+                tf.keras.applications.vgg16.VGG16(include_top=False, input_shape=in_shape, weights='imagenet'),
+                tf.keras.layers.GlobalAveragePooling2D(),
+                tf.keras.layers.Dense(128, activation='relu')
+            ])
+            self.encoded_size = 128
+        elif type(backbone) == tuple:
+            self.conv_block = Conv2DBlock(self.backbone[0], start_n=1)
+            self.dense_block = DenseBlock(self.backbone[1], start_n=self.conv_block.end_n+1)
+            self.backbone_model = tf.keras.Sequential([self.conv_block,
+                                                       Flatten(name=f'{self.dense_block.end_n+1:02d}_flatten'),
+                                                       self.dense_block])
+            self.encoded_size = self.backbone[1][-1]['units']
+        else:
+            raise ValueError(f"Backbone {backbone} not supported")
+        self.sigma = tf.Variable(self.sigma_ini, name="sigma", trainable=True)
+        self.kernel_x = kqmcomps.create_rbf_kernel(self.sigma)
+        self.kqmu = kqmcomps.KQMUnit(self.kernel_x,
+                            dim_x=self.encoded_size,
+                            dim_y=self.number_of_classes,
+                            n_comp=self.n_comp
+                            )
+    def call(self, x):
+        x = self.backbone_model(x)
+        rho_x = kqmcomps.pure2dm(x)
+        rho_y = self.kqmu(rho_x)
+        y_w, y_v = kqmcomps.dm2comp(rho_y)
+        norms_y = tf.expand_dims(tf.linalg.norm(y_v, axis=-1), axis=-1)
+        y_v = y_v / norms_y
+        probs = tf.einsum('...j,...ji->...i', y_w, y_v ** 2, optimize="optimal")
+        return probs
+    
+    def init_model_params(self, run):
+
+        dataloader = run.tr
+        batch_size_backup = dataloader.batch_size
+        dataloader.batch_size = self.n_comp
+        dataloader.on_epoch_end()
+        gen_tr = iter(dataloader) 
+        tr_x, (tr_p, tr_l) = gen_tr.__next__()
+        tr_x, tr_l = run.normitem(tr_x, tr_l)
+        self.predict(tr_x)
+        x = self.backbone_model(tr_x)
+        self.kqmu.c_x.assign(x)
+        if self.sigma_ini is None:
+            distances = pairwise_distances(x)
+            sigma = np.mean(distances)
+            self.train_model.sigma.assign(sigma)
+            print(f"sigma: {sigma}")
+        #y = tf.concat([tr_p[:,2:3], 1. - tr_p[:,2:3]], axis=1)
+        #y = tf.gather(tr_p, self.metrics.class_ids, axis=1)
+        #self.kqmu.c_y.assign(y)
+        # restore val dataset config
+        dataloader.batch_size = batch_size_backup
+        dataloader.on_epoch_end()
+        return     
+
+    def get_name(self):
+        if type(self.backbone) == str:
+            r = f"qmreg_{self.backbone}"
+        else:
+            r = f"qmreg_customconv"
+        return r
+
+    def produces_segmentation_probabilities(self):
+        return False    
+
+    def produces_label_proportions(self):
+        return True
+    
