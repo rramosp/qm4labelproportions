@@ -1,7 +1,11 @@
 import numpy as np
 import tensorflow as tf
 from tensorflow.keras.models import Model
+import tensorflow_probability as tfp
+tfd = tfp.distributions
 import numpy as np
+from tensorflow.keras.layers import Conv2D, Resizing, InputLayer, Flatten, Dense
+from tensorflow.keras.models import Sequential
 
 
 # Patch extraction as a layer 
@@ -389,3 +393,22 @@ def overlap_loss(y_true, y_pred):
     overlap = pure_dm_overlap(y_true, y_pred, overlap_kernel)
     #return -tf.reduce_mean(tf.math.log(overlap + 0.0000001), axis=-1) 
     return -tf.reduce_mean(overlap , axis=-1) 
+
+def create_resize_encoder(input_shape, encoded_size=64, filter_size=[32, 64, 128]):
+    encoder = Sequential([
+        InputLayer(input_shape=input_shape),
+        #tfkl.Lambda(lambda x: tf.cast(x, tf.float32) - 0.5),
+        Resizing(16, 16),
+        Conv2D(filter_size[0], 3, 2,
+                    padding='same', activation=tf.nn.relu),
+        Conv2D(filter_size[1], 3, 2,
+                    padding='same', activation=tf.nn.relu),
+        Conv2D(filter_size[2], 3, 2,
+                    padding='same', activation=tf.nn.relu),
+        #tfk.layers.LayerNormalization(),
+        Flatten(),
+        Dense(encoded_size,
+                activation=None),
+                #activity_regularizer=tf.keras.regularizers.l2(1e-4)),
+    ])
+    return encoder

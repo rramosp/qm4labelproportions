@@ -5,6 +5,24 @@ import matplotlib.pyplot as plt
 from skimage.io import imread
 import seaborn as sns
 import os
+
+def to_onehot_argmax(x):
+    """
+    converts probabilities to one_hot by selecting the item with highest probability,
+    setting it to 1 and the rest to zero.
+    selection is made on the last dimenstion
+
+    x: tensor of shape [i, ..., number_of_classes]
+
+    returns: a tensor with the same shape with zeros and ones
+
+    warn: this is not a differentiable operation, since tf.argmax is not
+    """
+    number_of_classes = x.shape[-1]
+    amax = tf.argmax(x, axis=-1)
+    r = tf.reshape(tf.one_hot(tf.reshape(amax,-1), depth=number_of_classes), x.shape)
+    return r
+
 class PixelClassificationMetrics:
     """
     accumulates tp,tn,fp,fn per class and computes metrics on them
@@ -308,7 +326,7 @@ class ProportionsMetrics:
         return r.astype(np.float32)
     
     
-    def get_y_pred_as_proportions(self, y_pred, argmax=None):
+    def get_y_pred_as_proportions(self, y_pred, argmax=False):
         """
         y_pred: a tf tensor of shape [batch_size, pixel_size, pixel_size, number_of_classes] with 
                 probability predictions per pixel (such as the output of a softmax layer,so that class 
@@ -321,6 +339,8 @@ class ProportionsMetrics:
         
         returns: a tf tensor of shape [batch_size, number_of_classes]
                  if input has shape [batch_size, number_of_classes], the input is returned untouched
+
+        warn: if argmax=True the result will not be differentiable since tf.argmax is not
         """
         assert (len(y_pred.shape)==4 or len(y_pred.shape)==2) and y_pred.shape[-1]==self.number_of_classes
 
@@ -331,6 +351,8 @@ class ProportionsMetrics:
         if len(y_pred.shape)==4:
             # if we have probability predictions per pixel (softmax output)
             if argmax:
+                """
+                # we use tf argmax to compute
                 # compute proportions by selecting the class with highest assigned probability in each pixel
                 # and then computing the proportions of selected classes across each image.
                 # cannot use tf.argmax since it is not differentiable. this workaround substracts the max value
@@ -338,9 +360,13 @@ class ProportionsMetrics:
                 y_pred_argmax = y_pred - tf.reduce_max(y_pred, axis=-1, keepdims=True)
                 y_pred_argmax = tf.sigmoid( (y_pred_argmax*1e4 + 1)*1e1)
                 r = tf.reduce_mean(y_pred_argmax, axis=[1,2])
-                
+                """                
+                r = to_onehot_argmax(y_pred)
+                r = tf.reduce_mean(r, axis=[1,2])
+
             else:
-                # compute the proportions by averaging each class. Softmax output guarantees all will add up to one.
+                # compute the proportions by averaging each class. requires probabilities across each pixel
+                # to add up to 1. Previous softmax output guarantees all will add up to one.
                 r = tf.reduce_mean(y_pred, axis=[1,2])
         else:
             # if we already have a probabilities vector, return it as such

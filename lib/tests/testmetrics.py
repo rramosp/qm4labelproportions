@@ -1,7 +1,7 @@
 import numpy as np
 import matplotlib.pyplot as plt
 from rlxutils import subplots
-from .. import metrics
+from ..experiments import metrics
 
 print ("unit testing metrics")
 
