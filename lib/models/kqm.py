@@ -151,7 +151,7 @@ class AEQMPatchSegm(BaseModel):
                 encoded_size=64):
         super().__init__()
         autoinit(self)
-         if self.sigma_ini is None:
+        if self.sigma_ini is None:
             sigma_ini = 1.0
         else:
             sigma_ini = self.sigma_ini
@@ -299,7 +299,7 @@ class QMRegression(BaseModel):
             self.conv_block = Conv2DBlock(self.backbone[0], start_n=1)
             self.dense_block = DenseBlock(self.backbone[1], start_n=self.conv_block.end_n+1)
             self.backbone_model = tf.keras.Sequential([self.conv_block,
-                                                       Flatten(name=f'{self.dense_block.end_n+1:02d}_flatten'),
+                                                       tfkl.Flatten(name=f'{self.dense_block.end_n+1:02d}_flatten'),
                                                        self.dense_block])
             self.encoded_size = self.backbone[1][-1]['units']
         else:
