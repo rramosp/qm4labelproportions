@@ -78,7 +78,7 @@ class QMPatchSegmentation(BaseModel):
         if self.sigma_ini is None:
             distances = pairwise_distances(patches)
             sigma = np.mean(distances)
-            self.train_model.sigma.assign(sigma)
+            self.sigma.assign(sigma)
             print(f"sigma: {sigma}")
         #y = tf.concat([tr_p[:,2:3], 1. - tr_p[:,2:3]], axis=1)
         #y = tf.gather(tr_p, self.metrics.class_ids, axis=1)
@@ -200,7 +200,7 @@ class AEQMPatchSegm(BaseModel):
         if self.sigma_ini is None:
             distances = pairwise_distances(patches)
             sigma = np.mean(distances)
-            self.train_model.sigma.assign(sigma)
+            self.sigma.assign(sigma)
             print(f"sigma: {sigma}")
         #y = tf.concat([tr_p[:,2:3], 1. - tr_p[:,2:3]], axis=1)
         #y = tf.gather(tr_p, self.metrics.class_ids, axis=1)
@@ -304,7 +304,11 @@ class QMRegression(BaseModel):
             self.encoded_size = self.backbone[1][-1]['units']
         else:
             raise ValueError(f"Backbone {backbone} not supported")
-        self.sigma = tf.Variable(self.sigma_ini, name="sigma", trainable=True)
+        if self.sigma_ini is None:
+            sigma_ini = 1.0
+        else:
+            sigma_ini = self.sigma_ini
+        self.sigma = tf.Variable(sigma_ini, name="sigma", trainable=True)
         self.kernel_x = kqmcomps.create_rbf_kernel(self.sigma)
         self.kqmu = kqmcomps.KQMUnit(self.kernel_x,
                             dim_x=self.encoded_size,
@@ -336,7 +340,7 @@ class QMRegression(BaseModel):
         if self.sigma_ini is None:
             distances = pairwise_distances(x)
             sigma = np.mean(distances)
-            self.train_model.sigma.assign(sigma)
+            self.sigma.assign(sigma)
             print(f"sigma: {sigma}")
         #y = tf.concat([tr_p[:,2:3], 1. - tr_p[:,2:3]], axis=1)
         #y = tf.gather(tr_p, self.metrics.class_ids, axis=1)
