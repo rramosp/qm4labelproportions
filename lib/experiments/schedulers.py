@@ -46,3 +46,4 @@ def plot_schedule(init_lr, epochs, learning_rate_scheduler, learning_rate_schedu
     plt.grid()
     plt.xlabel("epoch")
     plt.ylabel("learning rate")
+
