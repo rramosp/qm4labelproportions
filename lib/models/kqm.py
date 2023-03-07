@@ -22,8 +22,11 @@ class QMPatchSegmentation(BaseModel):
         autoinit(self)
 
         self.dim_x = patch_size ** 2 * 3
-
-        self.sigma = tf.Variable(self.sigma_ini,
+        if self.sigma_ini is None:
+            sigma_ini = 1.0
+        else:
+            sigma_ini = self.sigma_ini
+        self.sigma = tf.Variable(sigma_ini,
                                  dtype=tf.float32,
                                  name="sigma", 
                                  trainable=True)       
@@ -72,6 +75,11 @@ class QMPatchSegmentation(BaseModel):
         idx = np.random.randint(low=0, high=patch_extr.num_patches ** 2, size=(self.n_comp,))
         patches = tf.gather(patches, idx, axis=1, batch_dims=1)
         self.kqmu.c_x.assign(patches)
+        if self.sigma_ini is None:
+            distances = pairwise_distances(patches)
+            sigma = np.mean(distances)
+            self.train_model.sigma.assign(sigma)
+            print(f"sigma: {sigma}")
         #y = tf.concat([tr_p[:,2:3], 1. - tr_p[:,2:3]], axis=1)
         #y = tf.gather(tr_p, self.metrics.class_ids, axis=1)
         #self.kqmu.c_y.assign(y)
@@ -143,7 +151,11 @@ class AEQMPatchSegm(BaseModel):
                 encoded_size=64):
         super().__init__()
         autoinit(self)
-        self.sigma = tf.Variable(self.sigma_ini,
+         if self.sigma_ini is None:
+            sigma_ini = 1.0
+        else:
+            sigma_ini = self.sigma_ini
+        self.sigma = tf.Variable(sigma_ini,
                                  dtype=tf.float32,
                                  name="sigma", 
                                  trainable=True)       
@@ -185,6 +197,11 @@ class AEQMPatchSegm(BaseModel):
             patches = tf.gather(patches, idx, axis=1, batch_dims=1)
             patches = self.encoder(tf.reshape(patches, (-1, self.patch_size, self.patch_size, 3)))
         self.kqmu.c_x.assign(patches)
+        if self.sigma_ini is None:
+            distances = pairwise_distances(patches)
+            sigma = np.mean(distances)
+            self.train_model.sigma.assign(sigma)
+            print(f"sigma: {sigma}")
         #y = tf.concat([tr_p[:,2:3], 1. - tr_p[:,2:3]], axis=1)
         #y = tf.gather(tr_p, self.metrics.class_ids, axis=1)
         #self.kqmu.c_y.assign(y)
