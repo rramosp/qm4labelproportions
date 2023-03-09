@@ -62,6 +62,7 @@ class Run:
                  log_confusion_matrix = False,
                  learning_rate_scheduler = None,
                  learning_rate_scheduler_kwargs = {},
+                 measure_mae_on_segmentation = True,
                  wandb_tags = []
                 ):
         autoinit.autoinit(self)
@@ -104,6 +105,10 @@ class Run:
 
         self.model_init_args['number_of_classes'] = self.number_of_classes
         self.model = self.model_class(**self.model_init_args)
+
+        # check model produces segmentations if required
+        if self.measure_mae_on_segmentation and not self.model.produces_segmentation_probabilities():
+            raise ValueError(f"you are requiring 'measure_mae_on_segmentation' but {self.model_class.__name__} does not produce segmentations")
 
         # feed some data through the model to force creating weight structures
         x, (p,l) = self.tr[0]
@@ -383,18 +388,24 @@ class Run:
                         losses_components[k].append(v)
 
                 losses.append(loss)
+
+                # get segmentation output if model is able to generate it
                 if self.model.produces_segmentation_probabilities():
                     out_segmentation = self.model.predict_segmentation(x)
 
+                # measure mae
+                if self.measure_mae_on_segmentation and self.model.produces_segmentation_probabilities():
                     maeps.append(self.metrics.multiclass_proportions_mae_on_chip(l, out_segmentation))
                     maeps_perclass.append(self.metrics.multiclass_proportions_mae_on_chip(l, out_segmentation, perclass=True).numpy())
-
-                    ious.append(self.metrics.compute_iou(l,out_segmentation))
-                    self.pixel_classification_metrics.update_state(l,out_segmentation)
-                    
                 elif self.model.produces_label_proportions():
                     maeps.append(self.metrics.multiclass_proportions_mae_on_chip(l, out))
                     maeps_perclass.append(self.metrics.multiclass_proportions_mae_on_chip(l, out, perclass=True).numpy())
+
+                # measure pixel based stuff
+                if self.model.produces_segmentation_probabilities():
+                    ious.append(self.metrics.compute_iou(l,out_segmentation))
+                    self.pixel_classification_metrics.update_state(l,out_segmentation)
+
                     
 
             # summarize validation stuff
@@ -562,8 +573,12 @@ class Run:
                 
             losses.append(self.get_loss(out,p,l).numpy())
             
-            if self.model.produces_label_proportions():
-                maeps.append(self.metrics.multiclass_proportions_mae_on_chip(l, out).numpy())
+            # measure mae
+            if self.measure_mae_on_segmentation and self.model.produces_segmentation_probabilities():
+                maeps.append(self.metrics.multiclass_proportions_mae_on_chip(l, out_segmentation))
+                mae_perclass.append(self.metrics.multiclass_proportions_mae_on_chip(l, out_segmentation, perclass=True).numpy())
+            elif self.model.produces_label_proportions():
+                maeps.append(self.metrics.multiclass_proportions_mae_on_chip(l, out))
                 mae_perclass.append(self.metrics.multiclass_proportions_mae_on_chip(l, out, perclass=True).numpy())
             
         r = {'loss': np.mean(losses) }
