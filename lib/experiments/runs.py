@@ -310,17 +310,18 @@ class Run:
     def get_trainable_variables(self):
         return self.model.trainable_variables
 
+    #@tf.function(input_signature=(tf.TensorSpec(shape=[None,96,96,3], dtype=tf.float32),
+    #                              tf.TensorSpec(shape=[None,5], dtype=tf.float32),
+    #                              tf.TensorSpec(shape=[None,96,96], dtype=tf.int16)))
     @tf.function
-    def predict_get_loss(self, x, p, l):
+    def aply_model_and_get_loss(self, x, p, l):
         out = self.predict(x)
         loss = self.get_loss(out,p,l)
         return loss, out
 
-    @tf.function
     def apply_model_and_compute_gradients(self, x,p,l):
         with tf.GradientTape() as t:
-            out = self.model(x)
-            loss = self.get_loss(out,p,l)
+            loss, out = self.aply_model_and_get_loss(x, p, l)
         grads = t.gradient(loss, self.get_trainable_variables())
         self.opt.apply_gradients(zip(grads, self.get_trainable_variables()))     
         return loss, out  
@@ -382,14 +383,20 @@ class Run:
                         losses_components[k].append(v)
 
                 losses.append(loss)
-                if self.model.produces_label_proportions():
-                    maeps.append(self.metrics.multiclass_proportions_mae_on_chip(l, out))
-                    maeps_perclass.append(self.metrics.multiclass_proportions_mae_on_chip(l, out, perclass=True).numpy())
                 if self.model.produces_segmentation_probabilities():
                     out_segmentation = self.model.predict_segmentation(x)
+
+                    maeps.append(self.metrics.multiclass_proportions_mae_on_chip(l, out_segmentation))
+                    maeps_perclass.append(self.metrics.multiclass_proportions_mae_on_chip(l, out_segmentation, perclass=True).numpy())
+
                     ious.append(self.metrics.compute_iou(l,out_segmentation))
                     self.pixel_classification_metrics.update_state(l,out_segmentation)
                     
+                elif self.model.produces_label_proportions():
+                    maeps.append(self.metrics.multiclass_proportions_mae_on_chip(l, out))
+                    maeps_perclass.append(self.metrics.multiclass_proportions_mae_on_chip(l, out, perclass=True).numpy())
+                    
+
             # summarize validation stuff
             txt_metrics = ""
             val_loss = np.mean(losses)
