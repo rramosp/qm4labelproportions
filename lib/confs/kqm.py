@@ -11,6 +11,18 @@ qmp01 = dict(
                             )
             )                            
 
+
+qmp02 = dict(
+            model_class = kqm.QMPatchSegmentation,
+            model_init_args = dict(
+                                patch_size=8,
+                                pred_strides=4,
+                                n_comp=128, 
+                                deep=False,
+                                sigma_ini=None
+                            )
+            )  
+
 aeqm = dict(
             model_class = kqm.AEQMPatchSegm,
             model_init_args = dict(
