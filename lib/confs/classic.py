@@ -13,6 +13,16 @@ downsampl01 = dict(
                 )
             )
 
+downsampl02 = dict(
+                model_class=classicsegm.Custom_DownsamplingSegmentation,
+                model_init_args=dict(
+                    conv_layers=[
+                        dict(kernel_size=8, filters=96, activation='relu', padding='valid', strides=4, dropout=0.1)
+                    ],
+                    use_alexnet_weights = True
+                )
+            )
+
 smvgg16 = dict(
                 model_class = classicsegm.SM_UnetSegmentation,
                 model_init_args = dict(sm_keywords = dict(backbone_name = 'vgg16'))
