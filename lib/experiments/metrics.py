@@ -351,16 +351,6 @@ class ProportionsMetrics:
         if len(y_pred.shape)==4:
             # if we have probability predictions per pixel (softmax output)
             if argmax:
-                """
-                # we use tf argmax to compute
-                # compute proportions by selecting the class with highest assigned probability in each pixel
-                # and then computing the proportions of selected classes across each image.
-                # cannot use tf.argmax since it is not differentiable. this workaround substracts the max value
-                # of each pixel from all classes and compares to zero using a sigmoid instead
-                y_pred_argmax = y_pred - tf.reduce_max(y_pred, axis=-1, keepdims=True)
-                y_pred_argmax = tf.sigmoid( (y_pred_argmax*1e4 + 1)*1e1)
-                r = tf.reduce_mean(y_pred_argmax, axis=[1,2])
-                """                
                 r = to_onehot_argmax(y_pred)
                 r = tf.reduce_mean(r, axis=[1,2])
 
@@ -373,7 +363,6 @@ class ProportionsMetrics:
             r = y_pred
 
         return r        
-
 
     def multiclass_proportions_mse(self, true_proportions, y_pred):
         """
