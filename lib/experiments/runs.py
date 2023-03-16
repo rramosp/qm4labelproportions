@@ -289,7 +289,7 @@ class Run:
 
         if self.loss_name in ['multiclass_proportions_mse', 'mse']:
             return self.metrics.multiclass_proportions_mse(p, out)
-
+        
         if self.loss_name in ['kldiv']:
             return self.metrics.kldiv(p, out)
         

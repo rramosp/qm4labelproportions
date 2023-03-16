@@ -20,7 +20,7 @@ def to_onehot_argmax(x):
     """
     number_of_classes = x.shape[-1]
     amax = tf.argmax(x, axis=-1)
-    r = tf.reshape(tf.one_hot(tf.reshape(amax,-1), depth=number_of_classes), x.shape)
+    r = tf.reshape(tf.one_hot(tf.reshape(amax,[-1]), depth=number_of_classes), x.shape)
     return r
 
 class PixelClassificationMetrics:
@@ -353,7 +353,6 @@ class ProportionsMetrics:
             if argmax:
                 r = to_onehot_argmax(y_pred)
                 r = tf.reduce_mean(r, axis=[1,2])
-
             else:
                 # compute the proportions by averaging each class. requires probabilities across each pixel
                 # to add up to 1. Previous softmax output guarantees all will add up to one.
