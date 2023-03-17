@@ -396,6 +396,35 @@ class ProportionsMetrics:
         )
         return r + reg
 
+    def multiclass_proportions_rmse(self, true_proportions, y_pred):
+        """
+        computes the mse between proportions on probability predictions (y_pred)
+        and target_proportions, using the class_weights in this instance.
+        
+        y_pred:  see y_pred in get_y_pred_as_proportions
+
+        returns: a float with mse.
+        """
+                        
+        assert len(true_proportions.shape)==2 and true_proportions.shape[-1]==self.number_of_classes
+
+        # compute the proportions on prediction
+        proportions_y_pred = self.get_y_pred_as_proportions(y_pred, argmax = self.rmse_proportions_argmax)
+
+        # regularization promoting sparsity. divide by max_pnorm to ensure value in [0,1]
+        reg = tf.reduce_mean(
+                    self.lambda_reg * pnorm(proportions_y_pred, self.p_for_norm) / self.max_pnorm
+                )
+
+        # compute mse using class weights
+        r = tf.reduce_mean(
+                tf.reduce_sum(
+                    ((true_proportions - proportions_y_pred)/(proportions_y_pred + 1e-5))**2 * self.class_weights_values, 
+                    axis=-1
+                )
+        )
+        return r + reg
+
 
     def kldiv(self, true_proportions, y_pred):
         """
@@ -479,7 +508,7 @@ class ProportionsMetrics:
     def multiclass_proportions_rmae(self, true_proportions, y_pred, perclass=False):
         """
         computes the relative mae between proportions on probability predictions (y_pred)
-        and target_proportions. NO CLASS WEIGHTS ARE USED.
+        and target_proportions. CLASS WEIGHTS ARE USED.
         
         relative mae is defined as sqrt( ( (y_true-y_pred)/(y_pred+1e-5) )**2 )
 
@@ -492,16 +521,18 @@ class ProportionsMetrics:
         assert len(true_proportions.shape)==2 and true_proportions.shape[-1]==self.number_of_classes
 
         # compute the proportions on prediction
-        proportions_y_pred = self.get_y_pred_as_proportions(y_pred, argmax = self.mae_proportions_argmax)
+        proportions_y_pred = self.get_y_pred_as_proportions(y_pred, argmax = self.rmae_proportions_argmax)
+
+        cw = 1 if perclass else self.class_weights_values
 
         # compute mae per class
         r = tf.reduce_mean(
-            tf.sqrt(((true_proportions - proportions_y_pred) / ( proportions_y_pred + 1e-5) )**2),
+            tf.sqrt(((true_proportions - proportions_y_pred) / ( proportions_y_pred + 1e-5) )**2) * cw,
             axis=0
         )
         # return mean if perclass is not required
         if not perclass:
-            r = tf.reduce_mean(r)
+            r = tf.reduce_sum(r)
             
         return r    
 
