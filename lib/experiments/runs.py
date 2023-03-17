@@ -258,6 +258,7 @@ class Run:
                 onchip_proportions = self.metrics.get_class_proportions_on_masks(val_l[i:i+1])[0]
 
                 maec = self.metrics.multiclass_proportions_mae_on_chip(val_l[i:i+1], val_out[i:i+1])
+                rmaec = self.metrics.multiclass_proportions_rmae_on_chip(val_l[i:i+1], val_out[i:i+1])
 
                 plt.bar(np.arange(nc)-.2, val_p[i], 0.2, label="on partition", alpha=.5)
                 plt.bar(np.arange(nc), onchip_proportions, 0.2, label="on chip", alpha=.5)
@@ -266,7 +267,7 @@ class Run:
                     plt.legend()
                 plt.grid();
                 plt.xticks(np.arange(nc), np.arange(nc));
-                plt.title(f"maeprops {maec:.3f}")            
+                plt.title(f"mae {maec:.3f} rmae {rmaec:.3f}")            
                 plt.xlabel("class number")
                 plt.ylim(0,1)
                 plt.ylabel("proportions")
@@ -364,7 +365,7 @@ class Run:
             log_dict['train/loss'] = tr_loss
             
             # measure stuff on validation for reporting
-            losses, ious, maeps, maeps_perclass = [], [], [], []
+            losses, ious, maeps, maeps_perclass, rmaeps, rmaeps_perclass = [], [], [], [], [], []
             losses_components = {}
             max_value = np.min([len(self.val),self.n_batches_online_val ]).astype(int)
             self.pixel_classification_metrics = metrics.PixelClassificationMetrics(number_of_classes=self.number_of_classes)
@@ -397,9 +398,13 @@ class Run:
                 if self.measure_mae_on_segmentation and self.model.produces_segmentation_probabilities():
                     maeps.append(self.metrics.multiclass_proportions_mae_on_chip(l, out_segmentation))
                     maeps_perclass.append(self.metrics.multiclass_proportions_mae_on_chip(l, out_segmentation, perclass=True).numpy())
+                    rmaeps.append(self.metrics.multiclass_proportions_rmae_on_chip(l, out_segmentation))
+                    rmaeps_perclass.append(self.metrics.multiclass_proportions_rmae_on_chip(l, out_segmentation, perclass=True).numpy())
                 elif self.model.produces_label_proportions():
                     maeps.append(self.metrics.multiclass_proportions_mae_on_chip(l, out))
                     maeps_perclass.append(self.metrics.multiclass_proportions_mae_on_chip(l, out, perclass=True).numpy())
+                    rmaeps.append(self.metrics.multiclass_proportions_rmae_on_chip(l, out))
+                    rmaeps_perclass.append(self.metrics.multiclass_proportions_rmae_on_chip(l, out, perclass=True).numpy())
 
                 # measure pixel based stuff
                 if self.model.produces_segmentation_probabilities():
@@ -414,6 +419,7 @@ class Run:
             val_loss_components = {k: np.mean(v) for k,v in losses_components.items()}
             if self.model.produces_label_proportions():
                 val_mean_mae = np.mean(maeps)
+                val_mean_rmae = np.mean(rmaeps)
                 txt_metrics += f"mae {val_mean_mae:.5f}"
             if self.model.produces_segmentation_probabilities():
                 val_mean_f1 = np.mean(self.pixel_classification_metrics.result('f1', 'micro'))
@@ -425,6 +431,8 @@ class Run:
             if self.model.produces_label_proportions():
                 r.update({'maeprops_on_chip::global': np.mean(maeps)})
                 r.update({f'maeprops_on_chip::class_{k}':v for k,v in zip(range(0, self.number_of_classes), np.r_[maeps_perclass].mean(axis=0))})
+                r.update({'rmaeprops_on_chip::global': np.mean(rmaeps)})
+                r.update({f'rmaeprops_on_chip::class_{k}':v for k,v in zip(range(0, self.number_of_classes), np.r_[rmaeps_perclass].mean(axis=0))})
 
             if self.model.produces_segmentation_probabilities(): 
                 r['f1::global']  = self.pixel_classification_metrics.result('f1', 'micro').numpy()
@@ -465,6 +473,7 @@ class Run:
                     log_dict["val/iou"] = val_mean_iou
                 if self.model.produces_label_proportions():
                     log_dict["val/maeprops_on_chip"] = val_mean_mae
+                    log_dict["val/rmaeprops_on_chip"] = val_mean_rmae
                 if self.learning_rate_scheduler_fn is not None:
                     log_dict['train/learning_rate'] = lr
          
@@ -514,6 +523,7 @@ class Run:
                     config = {}
                     for part in ['train', 'val', 'test']:
                         config[f"mae::{part}"] = r[part]['maeprops_on_chip global']
+                        config[f"rmae::{part}"] = r[part]['rmaeprops_on_chip global']
                         if self.model.produces_segmentation_probabilities():
                             config[f"f1::{part}"] = r[part]['f1 global']
                             config[f"iou::{part}"] = r[part]['iou global']
@@ -555,8 +565,8 @@ class Run:
         else:
             dataset = self.ts
 
-        losses, maeps, ious = [], [], []
-        mae_perclass = []
+        losses, maeps, rmaeps, ious = [], [], [], []
+        mae_perclass, rmae_perclass = [], []
         self.summary_classification_metrics = metrics.PixelClassificationMetrics(number_of_classes=self.number_of_classes)
         self.summary_classification_metrics.reset_state()
         for x, (p,l) in pbar(dataset):
@@ -577,14 +587,20 @@ class Run:
             if self.measure_mae_on_segmentation and self.model.produces_segmentation_probabilities():
                 maeps.append(self.metrics.multiclass_proportions_mae_on_chip(l, out_segmentation))
                 mae_perclass.append(self.metrics.multiclass_proportions_mae_on_chip(l, out_segmentation, perclass=True).numpy())
+                rmaeps.append(self.metrics.multiclass_proportions_rmae_on_chip(l, out_segmentation))
+                rmae_perclass.append(self.metrics.multiclass_proportions_rmae_on_chip(l, out_segmentation, perclass=True).numpy())
             elif self.model.produces_label_proportions():
                 maeps.append(self.metrics.multiclass_proportions_mae_on_chip(l, out))
                 mae_perclass.append(self.metrics.multiclass_proportions_mae_on_chip(l, out, perclass=True).numpy())
-            
+                rmaeps.append(self.metrics.multiclass_proportions_rmae_on_chip(l, out))
+                mae_perclass.append(self.metrics.multiclass_proportions_rmae_on_chip(l, out, perclass=True).numpy())
+                                    
         r = {'loss': np.mean(losses) }
         if self.model.produces_label_proportions():
             r.update({'maeprops_on_chip::global': np.mean(maeps)})
             r.update({f'maeprops_on_chip::class_{k}':v for k,v in zip(range(0, self.number_of_classes), np.r_[mae_perclass].mean(axis=0))})
+            r.update({'rmaeprops_on_chip::global': np.mean(rmaeps)})
+            r.update({f'rmaeprops_on_chip::class_{k}':v for k,v in zip(range(0, self.number_of_classes), np.r_[rmae_perclass].mean(axis=0))})
 
         if self.model.produces_segmentation_probabilities(): 
             r['f1::global']  = self.summary_classification_metrics.result('f1', 'micro').numpy()

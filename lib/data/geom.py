@@ -3,7 +3,7 @@ import geemap
 import shapely as sh
 from shapely.geometry import box, Polygon, MultiPolygon, GeometryCollection
 
-from . import data
+#from . import data
 from pyproj import CRS
 import numpy as np
 from progressbar import progressbar as pbar
