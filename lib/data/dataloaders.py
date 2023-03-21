@@ -366,6 +366,8 @@ class GeoDataLoader(tf.keras.utils.Sequence):
             if self.class_groups is not None:
                 chip = chip.group_classes(self.class_groups)
 
+            # try different ways of accessing partition proportions as the
+            # dictionary stored in the pickle evolved.
             if f'partitions{self.partitions_id}' in chip.label_proportions.keys():
                 p = chip.label_proportions[f'partitions{self.partitions_id}']
             elif f'partitions_{self.partitions_id}' in chip.label_proportions.keys():

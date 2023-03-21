@@ -72,7 +72,8 @@ class Chip:
         for k,v in self.data.items():
             exec(f"self.{k}=v")
         
-        self.proportions_flattened = {k: (v if k=='partitions_aschip' else v['proportions']) \
+        # older versions stored foreign proportions in different dictionary formats
+        self.proportions_flattened = {k: v['proportions'] if 'proportions' in v.keys() else v \
                                       for k,v in self.label_proportions.items()}
 
         # try to infer the number of classes from data in this chip
