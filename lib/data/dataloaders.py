@@ -276,22 +276,27 @@ class GeoDataLoader(tf.keras.utils.Sequence):
         
 
     def load_partitions_map(self):
-        partitions_map_file = f'{self.basedir}/../partitions_map_{self.hashcode}.csv'    
+        partitions_map_file = f'{self.basedir}/../partitions_map_{self.hashcode}.csv'   
+        colname = f'partitions_{self.partitions_id}'
+
         if os.path.isfile(partitions_map_file) and self.save_partitions_map:
             r = pd.read_csv(partitions_map_file)
         else:
             r = []
             for chip_basedir in self.chips_basedirs:
                 c = Chip(f"{self.basedir}/{chip_basedir}")
-                cr = {k:v['partition_id'] for k,v in c.data['label_proportions'].items() if 'partition_id' in v.keys()}
+                cr = {k:v['partition_id'] for k,v in c.data['label_proportions'].items() if (isinstance(v, dict) and 'partition_id' in v.keys())}
+                if len(cr)==0:
+                    cr[colname] = c.data['label_proportions'][f'foreignid_{self.partitions_id}']
                 cr['chip_id'] = c.data['chip_id']
+                
                 r.append(cr)
 
             r = pd.DataFrame(r)   
             if self.save_partitions_map:    
                 r.to_csv(partitions_map_file, index=False)
+            r.to_csv(partitions_map_file, index=False)
             
-        colname = f'partitions_{self.partitions_id}'
         self.partitions_map = r
         self.partitions_batches = self.partitions_map.groupby(colname)[['chip_id']].agg(lambda x: list(x))
         self.partitions_batches[colname] = self.partitions_batches.index

@@ -73,14 +73,14 @@ class Chip:
             exec(f"self.{k}=v")
         
         # older versions stored foreign proportions in different dictionary formats
-        self.proportions_flattened = {k: v['proportions'] if 'proportions' in v.keys() else v \
+        self.proportions_flattened = {k: v['proportions'] if isinstance(v, dict) and 'proportions' in v.keys() else v \
                                       for k,v in self.label_proportions.items()}
 
         # try to infer the number of classes from data in this chip
         if number_of_classes is None:
             # take the max number present in labels or proportions
             number_of_classes = np.max([np.max(np.unique(self.label)), 
-                                        np.max([int(k) for v in self.proportions_flattened.values() for k in v.keys() ])])
+                                        np.max([int(k) for v in self.proportions_flattened.values() if isinstance(v, dict) for k in v.keys() ])])
 
         self.number_of_classes = number_of_classes
 
@@ -152,6 +152,8 @@ class Chip:
             mapped_class = str(mapped_class)
             for partition_id in self.proportions_flattened.keys():
                 p = self.proportions_flattened[partition_id]
+                if not isinstance(p, dict):
+                    continue
                 if original_class in p.keys():
                     r.proportions_flattened[partition_id][str(mapped_class)] += p[original_class]
 
@@ -161,6 +163,8 @@ class Chip:
                 original_class = str(original_class)
                 for partition_id in self.proportions_flattened.keys():
                     p = self.proportions_flattened[partition_id]
+                    if not isinstance(p, dict):
+                        continue
                     if original_class in p.keys(): 
                         r.proportions_flattened[partition_id][str(0)] += p[original_class]
             
@@ -168,6 +172,9 @@ class Chip:
         lp = r.data['label_proportions']
         for k,v in r.proportions_flattened.items():
             if k in lp.keys():
+                if not isinstance(lp[k], dict):
+                    continue
+
                 if 'proportions' in lp[k].keys():
                     lp[k]['proportions'] = v
                 else:
@@ -175,6 +182,9 @@ class Chip:
                     
         # check all proportions add up to 1
         for k,v in lp.items():
+            if not isinstance(v, dict):
+                continue
+
             if 'proportions' in v.keys():
                 v = v['proportions']
             if np.allclose(sum(v.values()),0, atol=1e-4):
