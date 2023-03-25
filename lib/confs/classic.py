@@ -50,6 +50,12 @@ downsampl08 = dict(
                 model_init_args=dict(conv_layers=[dict(kernel_size=2, filters=96, activation='relu', padding='valid', strides=2, dropout=0.1)])
             )
 
+downsampl08a = dict(
+                model_class=classicsegm.Custom_DownsamplingSegmentation,
+                model_init_args=dict(conv_layers=[dict(kernel_size=2, filters=32, activation='relu', padding='valid', strides=2, dropout=0.1)])
+            )
+
+
 downsampl09 = dict(
                 model_class=classicsegm.Custom_DownsamplingSegmentation,
                 model_init_args=dict(conv_layers=[dict(kernel_size=4, filters=96, activation='relu', padding='valid', strides=4, dropout=0.1)])

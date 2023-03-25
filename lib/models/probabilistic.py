@@ -13,7 +13,7 @@ def plot_model(x, y=None, m=None, contours='Pz'):
 
     assert contours in ['Pz', 'Pc_given_z', 'Pc_given_z/boundary']
     
-    if m is not None and 'encoder' in dir(m):
+    if m is not None and 'encoder' in dir(m) and m.encoder is not None:
         x = m.encoder(x).numpy()
     
     sx = np.random.random(size=(10000,2))
@@ -70,6 +70,7 @@ class GMMPrototypes(tf.keras.Model):
             self.encoder = DenseBlock(self.encoder_layers)
         else:
             self.gaussian_mixture_dim = input_dim
+            self.encoder = None
         
         self.gaussian_mixture_block = GaussianMixtureLayer(self.number_of_gaussians, 
                                                            name = 'gm', 
