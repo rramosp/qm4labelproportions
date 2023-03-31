@@ -7,7 +7,8 @@ qmp02 = dict(model_class = kqm.QMPatchSegmentation,
              model_init_args = dict(patch_size=6, pred_strides=6, n_comp=32, sigma_ini=None,deep=False))                            
 
 qmp03 = dict(model_class = kqm.QMPatchSegmentation,
-             model_init_args = dict(patch_size=6, pred_strides=6, n_comp=64, sigma_ini=None,deep=False))                            
+             model_init_args = dict(patch_size=6, pred_strides=6, n_comp=64, sigma_ini=None,deep=False),
+             loss = 'mse', learning_rate=0.0001)                            
 
 qmp03a = dict(model_class = kqm.QMPatchSegmentation,
              model_init_args = dict(patch_size=2, pred_strides=2, n_comp=64, sigma_ini=None,deep=False))                            
@@ -40,6 +41,19 @@ qmp04 = dict(model_class = kqm.QMPatchSegmentation,
 
 qmp05 = dict(model_class = kqm.QMPatchSegmentation,
              model_init_args = dict(patch_size=6, pred_strides=6, n_comp=256, sigma_ini=None,deep=False))                            
+
+qmp06a = dict(model_class = kqm.QMPatchSegmentation,
+             model_init_args = dict(patch_size=6, pred_strides=2, n_comp=64, sigma_ini=None,deep=False),
+             loss = 'mse', learning_rate=0.0001)                            
+
+qmp06b = dict(model_class = kqm.QMPatchSegmentation,
+             model_init_args = dict(patch_size=2, pred_strides=2, n_comp=64, sigma_ini=None,deep=False),
+             loss = 'mse', learning_rate=0.0001)                            
+
+qmp06c = dict(model_class = kqm.QMPatchSegmentation,
+             model_init_args = dict(patch_size=6, pred_strides=6, n_comp=64, sigma_ini=None,deep=True),
+             loss = 'mse', learning_rate=0.0001)                            
+
 
 
 

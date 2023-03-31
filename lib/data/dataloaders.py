@@ -141,7 +141,8 @@ class GeoDataLoader(tf.keras.utils.Sequence):
         # select only files which exist for each split
         split_files = {}
         for split in ['train', 'test', 'val']:
-            split_identifiers = [i+".pkl" for i in splits[splits[f"split_{partitions_id}"]==split].identifier.values]
+            split_name = "split" if partitions_id=='aschip' else f"split_{partitions_id}"
+            split_identifiers = [i+".pkl" for i in splits[splits[split_name]==split].identifier.values]
             split_files[split] = list(set(split_identifiers).intersection(files))
 
         # split also the cache sizes
@@ -509,7 +510,8 @@ class S2_ESAWorldCover_DataLoader(GeoDataLoader):
     @classmethod
     def split_per_partition(cls, **kwargs):
         """
-        added to that instrospection on this method refers to this class (and not to the parent)
+        added s
+        o that instrospection on this method refers to this class (and not to the parent)
         """
         return super().split_per_partition(**kwargs)
 
@@ -525,9 +527,22 @@ class S2_EUCrop_DataLoader(GeoDataLoader):
     @classmethod
     def split_per_partition(cls, **kwargs):
         """
-        added to that instrospection on this method refers to this class (and not to the parent)
+        added so that instrospection on this method refers to this class (and not to the parent)
         """
         return super().split_per_partition(**kwargs)
 
     def get_number_of_input_classes(self):
         return 23
+
+class SoilPH_DataLoader(GeoDataLoader):
+
+    @classmethod
+    def split_per_partition(cls, **kwargs):
+        """
+        added so that instrospection on this method refers to this class (and not to the parent)
+        """
+        return super().split_per_partition(**kwargs)
+
+    def get_number_of_input_classes(self):
+        return 3
+

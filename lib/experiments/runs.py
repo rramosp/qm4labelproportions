@@ -294,6 +294,9 @@ class Run:
         if self.loss_name in ['multiclass_proportions_rmse', 'rmse']:
             return self.metrics.multiclass_proportions_rmse(p, out)
         
+        if self.loss_name in ['pixel_level_cross_entropy', 'pxce']:
+            return self.metrics.pixel_level_categorical_cross_entropy(l, out)
+        
         if self.loss_name in ['kldiv']:
             return self.metrics.kldiv(p, out)
         

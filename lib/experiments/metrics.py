@@ -366,7 +366,39 @@ class ProportionsMetrics:
             r = y_pred
 
         return r        
+    
+    def pixel_level_categorical_cross_entropy(self, y_true, y_pred):
+        """
+        computes the categorical cross entropy between to segmentation maps
+        of, possibly, different sizes by resizing the smaller to the size
+        of the larger.
 
+        y_pred: must have shape (batch_size, pixels_width, pixels_heigh, number_of_classes) 
+                with probabilities in each pixel adding up to one
+        y_true: must have shape (batch_size, pixels_width, pixels_heigh, number_of_classes)
+                with a one hot encoding of the target labels
+                or shape (batch_size, pixels_width, pixels_heigh) with integer 0..number_of_classes
+                which will be transformed to one_hot
+        """
+        # resize smallest
+        if y_true.shape[1]<y_pred.shape[1]:
+            y_true = tf.image.resize(y_true[..., tf.newaxis], y_pred.shape[1:3], method='nearest')[:,:,:,0]
+
+        if y_pred.shape[1]<y_true.shape[1]:
+            y_pred = tf.image.resize(y_pred, y_true.shape[1:3], method='nearest')
+
+        if len(y_true.shape)==3:
+            y_true = tf.one_hot(tf.cast(y_true, tf.uint8), self.number_of_classes)
+
+        if not y_pred.shape[-1]==self.number_of_classes:
+            raise ValueError(f"incorrect number of classes in y_pred, found {y_pred.shape[-1]} but expected {self.number_of_classes}")
+
+        if not y_true.shape[-1]==self.number_of_classes:
+            raise ValueError(f"incorrect number of classes in y_trye, found {y_true.shape[-1]} but expected {self.number_of_classes}")
+
+        cce = -tf.reduce_mean(tf.reduce_sum(tf.math.log(y_pred)*y_true, axis=-1))        
+        return cce
+    
     def multiclass_proportions_mse(self, true_proportions, y_pred):
         """
         computes the mse between proportions on probability predictions (y_pred)

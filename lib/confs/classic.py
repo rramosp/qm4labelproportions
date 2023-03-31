@@ -47,8 +47,18 @@ downsampl07 = dict(
 # 3- best nb filters kernel size 2,4,8,16,32 stride the same
 downsampl08 = dict(
                 model_class=classicsegm.Custom_DownsamplingSegmentation,
-                model_init_args=dict(conv_layers=[dict(kernel_size=2, filters=96, activation='relu', padding='valid', strides=2, dropout=0.1)])
+                model_init_args=dict(conv_layers=[dict(kernel_size=2, filters=96, activation='relu', padding='valid', strides=2, dropout=0.1)]),
+                loss = 'mse',
+                learning_rate = 0.001
             )
+
+downsampl08pxce = dict(
+                model_class=classicsegm.Custom_DownsamplingSegmentation,
+                model_init_args=dict(conv_layers=[dict(kernel_size=2, filters=96, activation='relu', padding='valid', strides=2, dropout=0.1)]),
+                loss='pxce',
+                learning_rate = 0.001
+            )
+
 
 downsampl08a = dict(
                 model_class=classicsegm.Custom_DownsamplingSegmentation,
@@ -58,7 +68,30 @@ downsampl08a = dict(
 
 downsampl09 = dict(
                 model_class=classicsegm.Custom_DownsamplingSegmentation,
-                model_init_args=dict(conv_layers=[dict(kernel_size=4, filters=96, activation='relu', padding='valid', strides=4, dropout=0.1)])
+                model_init_args=dict(conv_layers=[dict(kernel_size=4, filters=96, activation='relu', padding='valid', strides=4, dropout=0.1)]),
+                loss = 'mse',
+                learning_rate = 0.001
+            )
+
+downsampl09pxce = dict(
+                model_class=classicsegm.Custom_DownsamplingSegmentation,
+                model_init_args=dict(conv_layers=[dict(kernel_size=4, filters=96, activation='relu', padding='valid', strides=4, dropout=0.1)]),
+                loss = 'pxce',
+                learning_rate = 0.001
+            )
+
+downsampl09a = dict(
+                model_class=classicsegm.Custom_DownsamplingSegmentation,
+                model_init_args=dict(conv_layers=[dict(kernel_size=4, filters=96, activation='relu', padding='valid', strides=2, dropout=0.1)]),
+                loss = 'mse',
+                learning_rate = 0.001
+            )
+
+downsampl09apxce = dict(
+                model_class=classicsegm.Custom_DownsamplingSegmentation,
+                model_init_args=dict(conv_layers=[dict(kernel_size=4, filters=96, activation='relu', padding='valid', strides=2, dropout=0.1)]),
+                loss = 'pxce',
+                learning_rate = 0.001
             )
 
 downsampl10 = dict(
@@ -145,9 +178,19 @@ unet02 = dict(
 
 unet04 = dict(
                 model_class = classicsegm.Custom_UnetSegmentation,
-                model_init_args = dict(nlayers = 4)
+                model_init_args = dict(nlayers = 4),
+                loss='mse',
+                learning_rate = 0.00001
+    
             )
 
+unet04pxce = dict(
+                model_class = classicsegm.Custom_UnetSegmentation,
+                model_init_args = dict(nlayers = 4),
+                loss='pxce',
+                learning_rate = 0.00001
+    
+            )
 
 vgg16regr = dict (
                 model_class = classicregr.KerasBackbone_ConvolutionsRegression,
@@ -169,3 +212,42 @@ convreg01 = {
                                     ]
                     )
           }
+
+smvgg16imgnet_mse = dict(
+                model_class = classicsegm.SM_UnetSegmentation,
+                model_init_args = dict(sm_keywords = dict(backbone_name = 'vgg16', encoder_weights='imagenet')),
+                loss='mse'
+            )
+
+smvgg16imgnet_pcxe = dict(
+                model_class = classicsegm.SM_UnetSegmentation,
+                model_init_args = dict(sm_keywords = dict(backbone_name = 'vgg16', encoder_weights='imagenet')),
+                loss='pxce'
+            )
+
+smvgg16_mse = dict(
+                model_class = classicsegm.SM_UnetSegmentation,
+                model_init_args = dict(sm_keywords = dict(backbone_name = 'vgg16')),
+                loss='mse',
+                learning_rate = 0.00001
+            )
+
+smvgg16_pcxe = dict(
+                model_class = classicsegm.SM_UnetSegmentation,
+                model_init_args = dict(sm_keywords = dict(backbone_name = 'vgg16')),
+                loss='pxce'
+            )
+
+smresnet18_mse = dict(
+                model_class = classicsegm.SM_UnetSegmentation,
+                model_init_args = dict(sm_keywords = dict(backbone_name = 'resnet18')),
+                loss='mse',
+                learning_rate = 0.00001
+            )
+
+smresnet18_pcxe = dict(
+                model_class = classicsegm.SM_UnetSegmentation,
+                model_init_args = dict(sm_keywords = dict(backbone_name = 'resnet18')),
+                loss='pxce',
+                learning_rate = 0.00001
+            )
