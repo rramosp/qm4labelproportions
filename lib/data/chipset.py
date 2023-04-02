@@ -189,7 +189,7 @@ class Chip:
                 v = v['proportions']
             if np.allclose(sum(v.values()),0, atol=1e-4):
                 
-                raise ValueError(f"internal error: mapped proportions do not add up to 1, {self.filename}")
+                raise ValueError(f"internal error: mapped proportions do not add up to 1 in {self.filename}, they add up to {sum(v.values())}")
 
 
         return r        
@@ -221,7 +221,10 @@ class Chip:
             fpath = pathlib.Path(self.filename)
             geotiff_filename  = self.filename[:-len(fpath.suffix)] + '.tif'
             
-        pixels = self.data['chipmean']
+        if 'chipmean' in self.data.keys():
+            pixels = self.data['chipmean']
+        else:
+            pixels = self.data['chip']
 
         maxy, minx = self.metadata['corners']['nw']
         miny, maxx = self.metadata['corners']['se']        
@@ -242,7 +245,7 @@ class Chip:
 
         for ax,i in subplots(3, usizex=5, usizey=3.5):
             if i==0: 
-                plt.imshow(self.chipmean)
+                plt.imshow(self.chip) ## XX
                 plt.title("/".join(self.filename.split("/")[-1:]))
             if i==1:
                 cmap=matplotlib.colors.ListedColormap([plt.cm.gist_ncar(i/self.number_of_classes) \

@@ -14,6 +14,7 @@ import geopandas as gpd
 from progressbar import progressbar as pbar
 import hashlib
 from itertools import islice
+from collections import OrderedDict
 
 from .chipset import *
 
@@ -389,11 +390,11 @@ class GeoDataLoader(tf.keras.utils.Sequence):
             p = np.r_[[p[str(i)] if str(i) in p.keys() else 0 for i in range(self.number_of_output_classes)]]    
 
             # ensure 100x100 chips
-            chipmean = chip.chipmean[:100,:100,:] 
+            chipimg = chip.chip[:100,:100,:] 
             labels   = chip.label[:100,:100]
 
             # build output and cache it if there is space
-            r = [chipmean, labels, p]
+            r = [chipimg, labels, p]
             if len(self.cache) < self.cache_size:
                 self.cache[chip_filename] = r
             return r
@@ -517,10 +518,18 @@ class S2_ESAWorldCover_DataLoader(GeoDataLoader):
 
     def get_number_of_input_classes(self):
         return 12
+    
+    @classmethod    
+    def get_class_weights(cls):
 
-    def get_class_names(self):
-        return {'0': 'none', '1': 'water', '2': 'trees', '3': 'not used', '4': 'flooded vegetation', '5': 'crops',
-                '6': 'not used', '7': 'built area', '8': 'bare ground', '9': 'snow/ice', '10': 'clouds', '11': 'rangeland'}
+        class_weights = OrderedDict()
+        class_weights[0] = 1
+        class_weights[1] = 1
+        class_weights[(2,3,6)] = 1
+        class_weights[4] = 1
+        class_weights[5] = 1
+
+        return class_weights
 
 class S2_EUCrop_DataLoader(GeoDataLoader):
 
@@ -544,5 +553,5 @@ class SoilPH_DataLoader(GeoDataLoader):
         return super().split_per_partition(**kwargs)
 
     def get_number_of_input_classes(self):
-        return 3
+        return 5
 

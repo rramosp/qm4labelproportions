@@ -1,3 +1,15 @@
+import argparse
+parser = argparse.ArgumentParser()
+parser.add_argument('--conf', required=True, type=str, help='the conf under lib/confs to use')
+parser.add_argument('--dataset_folder', required=True, type=str, help='the folder containing a dataset')
+parser.add_argument('--dataloader_class', required=True, type=str, help='a class name under dataloaders')
+parser.add_argument('--learning_rate', required=False, default=None, type=float, help='the learning rate, a float')
+parser.add_argument('--loss', required=False, default=None, type=str, help="loss function, 'mse', or 'pxce', etc.")
+
+args = parser.parse_args()
+
+
+
 import sys
 import os
 import tensorflow as tf
@@ -13,47 +25,75 @@ import numpy as np
 # load preset models
 from lib.confs import kqm as kqmconfs
 from lib.confs import classic as classicconfs
-from lib.confs import nlbe
+
+conf = args.conf
+dataset_folder = args.dataset_folder
+dataloader_class = args.dataloader_class
+learning_rate = args.learning_rate
+loss             = args.loss
+dataloader_class = eval(f'dataloaders.{args.dataloader_class}')
 
 wandb_project = 'qm4lp-test-experiments'
 wandb_entity  = 'mindlab'
 
-model = classicconfs.downsampl01
-print (model['model_init_args'])
-
-
 # -----------------------------------
 # change these dirs to your settings
 # -----------------------------------
-basedir = "/home/rlx/data/nlbe"
 outdir = "/tmp"
 
+model = eval(conf)
+print (conf, model['model_init_args'])
+if not 'metrics_args' in model.keys():
+    model['metrics_args'] = {}
+    
+if loss is None:
+    if 'loss' in model.keys():
+        loss = model['loss']
+        del(model['loss'])
+    else:
+        loss = 'mse'
+else:
+    del(model['loss'])
+    
+
+if learning_rate is None:
+    if 'learning_rate' in model.keys():
+        learning_rate = model['learning_rate']
+        del(model['learning_rate'])
+    else:
+        learning_rate = 0.0001
+else:
+    del(model['learning_rate'])
+
+tagset = ['set13']
+
 run = runs.Run(
-               **model,
-               dataloader_split_method = dataloaders.S2_ESAWorldCover_DataLoader.split_per_partition,
-               dataloader_split_args = dict (
-                    basedir = f'{basedir}/nlbe_sentinel2rgb_2020_landcover/',
-                    partitions_id = 'communes',
-                    batch_size = 32,
-                    cache_size = 1000,
-                    shuffle = True,
-                    max_chips = 500
-                ),
-               
-               class_weights=nlbe.nlbe_class_weights,
-    
-               outdir = outdir,
-               wandb_project = wandb_project,
-               wandb_entity = wandb_entity,
-               log_imgs = True,
-               log_confusion_matrix = True,
-    
-               loss = 'kldiv',
-               learning_rate = 0.001,
-            
-               epochs = 2
+
+            **model,
+            dataloader_split_method = dataloader_class.split_per_partition,
+            dataloader_split_args = dict (
+                basedir = dataset_folder,
+                partitions_id = 'communes',
+                batch_size = 32, #'per_partition:max_batch_size=32',
+                cache_size = 1000,
+                shuffle = True,
+                max_chips = None
+            ),
+
+            class_weights=dataloader_class.get_class_weights(),
+
+            wandb_project = wandb_project,
+            wandb_entity = wandb_entity,
+            wandb_tags = [*tagset, conf],
+            log_imgs = True,
+            log_confusion_matrix = True,        
+            loss = loss,
+            learning_rate = learning_rate,
+
+            epochs = 50
+
               )
 
 run.initialize()
 run.model.summary()
-run.run()
+run.run(plot_val_sample=False)

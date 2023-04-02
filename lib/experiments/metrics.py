@@ -396,7 +396,7 @@ class ProportionsMetrics:
         if not y_true.shape[-1]==self.number_of_classes:
             raise ValueError(f"incorrect number of classes in y_trye, found {y_true.shape[-1]} but expected {self.number_of_classes}")
 
-        cce = -tf.reduce_mean(tf.reduce_sum(tf.math.log(y_pred)*y_true, axis=-1))        
+        cce = -tf.reduce_mean(tf.reduce_sum(tf.math.log(y_pred+1e-5)*y_true, axis=-1))        
         return cce
     
     def multiclass_proportions_mse(self, true_proportions, y_pred):

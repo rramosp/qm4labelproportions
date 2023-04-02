@@ -491,7 +491,7 @@ class Run:
             print (f"epoch {epoch:3d}, train loss {tr_loss:.5f}", flush=True)
             print (f"epoch {epoch:3d},   val loss {val_loss:.5f} {txt_metrics} {val_loss_components}", flush=True)
 
-    def run(self):
+    def run(self, plot_val_sample=True):
         """
         runs the experiment, calling fit, logging to wandbd, summarizing metrics, etc.
         """
@@ -520,7 +520,7 @@ class Run:
                 interrupted = True
 
             try:
-                if self.model.produces_label_proportions():
+                if self.model.produces_label_proportions() and plot_val_sample:
                     self.plot_val_sample(10); plt.show()
                 r = self.summary_result()
                 csv_path = os.path.join(self.outdir, self.run_id + '.csv')

@@ -62,7 +62,9 @@ downsampl08pxce = dict(
 
 downsampl08a = dict(
                 model_class=classicsegm.Custom_DownsamplingSegmentation,
-                model_init_args=dict(conv_layers=[dict(kernel_size=2, filters=32, activation='relu', padding='valid', strides=2, dropout=0.1)])
+                model_init_args=dict(conv_layers=[dict(kernel_size=2, filters=32, activation='relu', padding='valid', strides=2, dropout=0.1)]),
+                loss = 'mse',
+                learning_rate = 0.0001
             )
 
 
@@ -180,7 +182,7 @@ unet04 = dict(
                 model_class = classicsegm.Custom_UnetSegmentation,
                 model_init_args = dict(nlayers = 4),
                 loss='mse',
-                learning_rate = 0.00001
+                learning_rate = 0.0001
     
             )
 
