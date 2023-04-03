@@ -5,6 +5,7 @@ parser.add_argument('--dataset_folder', required=True, type=str, help='the folde
 parser.add_argument('--dataloader_class', required=True, type=str, help='a class name under dataloaders')
 parser.add_argument('--learning_rate', required=False, default=None, type=float, help='the learning rate, a float')
 parser.add_argument('--loss', required=False, default=None, type=str, help="loss function, 'mse', or 'pxce', etc.")
+parser.add_argument('--tag', required=False, default=None, type=str, help="tag for wandb")
 
 args = parser.parse_args()
 
@@ -31,6 +32,7 @@ dataset_folder = args.dataset_folder
 dataloader_class = args.dataloader_class
 learning_rate = args.learning_rate
 loss             = args.loss
+tag              = args.tag
 dataloader_class = eval(f'dataloaders.{args.dataloader_class}')
 
 wandb_project = 'qm4lp-test-experiments'
@@ -39,7 +41,7 @@ wandb_entity  = 'mindlab'
 # -----------------------------------
 # change these dirs to your settings
 # -----------------------------------
-outdir = "/tmp"
+outdir = "/opt/models"
 
 model = eval(conf)
 print (conf, model['model_init_args'])
@@ -65,7 +67,7 @@ if learning_rate is None:
 else:
     del(model['learning_rate'])
 
-tagset = ['set13']
+tagset = ['set13', tag]
 
 run = runs.Run(
 
@@ -81,6 +83,7 @@ run = runs.Run(
             ),
 
             class_weights=dataloader_class.get_class_weights(),
+            outdir = outdir,
 
             wandb_project = wandb_project,
             wandb_entity = wandb_entity,

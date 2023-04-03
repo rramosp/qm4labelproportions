@@ -555,3 +555,16 @@ class SoilPH_DataLoader(GeoDataLoader):
     def get_number_of_input_classes(self):
         return 5
 
+    @classmethod
+    def get_class_weights(cls):
+
+        class_weights = OrderedDict()
+        class_weights[0] = 1
+        class_weights[1] = 1
+        class_weights[2] = 1
+        class_weights[3] = 1
+        class_weights[4] = 1
+
+        return class_weights
+
+
