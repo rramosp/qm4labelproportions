@@ -537,6 +537,32 @@ class ProportionsMetrics:
             
         return r
     
+
+    def proportions_cross_entropy(self, true_proportions, y_pred, perclass=False):
+        """
+        computes the categorical cross extropy between proportions on probability predictions (y_pred)
+        and target_proportions. NO CLASS WEIGHTS ARE USED.
+
+        y_pred: see y_pred in get_y_pred_as_proportions
+        perclass: not used
+
+        returns: a float with mse if perclass=False, otherwise a vector
+        """
+                        
+        assert len(true_proportions.shape)==2 and true_proportions.shape[-1]==self.number_of_classes
+
+        # compute the proportions on prediction
+        proportions_y_pred = self.get_y_pred_as_proportions(y_pred, argmax = self.mae_proportions_argmax)
+
+        # compute categorical cross entropy per class
+        r = tf.reduce_mean(
+                -tf.reduce_sum(
+                            true_proportions*tf.math.log(proportions_y_pred+1e-5), 
+                            axis=1
+                            )
+                        )            
+        return r    
+    
     def multiclass_proportions_rmae(self, true_proportions, y_pred, perclass=False):
         """
         computes the relative mae between proportions on probability predictions (y_pred)
@@ -618,6 +644,20 @@ class ProportionsMetrics:
         """
         p_true = self.get_class_proportions_on_masks(y_true)
         return self.multiclass_proportions_mae(p_true, y_pred, perclass=perclass)
+
+    def proportions_cross_entropy_on_chip(self, y_true, y_pred, perclass=False):
+        """
+        computes the categorical cross entropy between the proportions observed in a prediction wrt to a mask
+        y_pred: a tf tensor of shape [batch_size, pixel_size, pixel_size, number_of_classes] with probability predictions
+        y_true: int array of shape [batch_size, pixel_size, pixel_size]
+        perclass: not used
+        argmax: see multiclass_proportions_mae
+
+        returns: a float with mse
+        """
+        p_true = self.get_class_proportions_on_masks(y_true)
+        return self.proportions_cross_entropy(p_true, y_pred)
+
 
 
     def multiclass_proportions_rmae_on_chip(self, y_true, y_pred, perclass=False):

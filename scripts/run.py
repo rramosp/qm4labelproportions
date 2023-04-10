@@ -4,12 +4,13 @@ parser.add_argument('--conf', required=True, type=str, help='the conf under lib/
 parser.add_argument('--dataset_folder', required=True, type=str, help='the folder containing a dataset')
 parser.add_argument('--dataloader_class', required=True, type=str, help='a class name under dataloaders')
 parser.add_argument('--learning_rate', required=False, default=None, type=float, help='the learning rate, a float')
+parser.add_argument('--epochs', required=False, default=50, type=int, help='the number of epochs')
 parser.add_argument('--loss', required=False, default=None, type=str, help="loss function, 'mse', or 'pxce', etc.")
-parser.add_argument('--tag', required=False, default=None, type=str, help="tag for wandb")
+parser.add_argument('--tags', required=False, default=None, type=str, help="tags for wandb (space separated)")
+parser.add_argument('--batch_size', required=False, default=32, type=int, help="the batch size")
+parser.add_argument('--early_stopping', action='store_true', help="if specified, training will stop if no progress on val loss")
 
 args = parser.parse_args()
-
-
 
 import sys
 import os
@@ -32,8 +33,11 @@ dataset_folder = args.dataset_folder
 dataloader_class = args.dataloader_class
 learning_rate = args.learning_rate
 loss             = args.loss
-tag              = args.tag
+tags              = args.tags.split()
+epochs           = args.epochs
 dataloader_class = eval(f'dataloaders.{args.dataloader_class}')
+batch_size       = args.batch_size
+early_stopping   = args.early_stopping
 
 wandb_project = 'qm4lp-test-experiments'
 wandb_entity  = 'mindlab'
@@ -41,7 +45,7 @@ wandb_entity  = 'mindlab'
 # -----------------------------------
 # change these dirs to your settings
 # -----------------------------------
-outdir = "/opt/models"
+outdir = "/opt/data/models"
 
 model = eval(conf)
 print (conf, model['model_init_args'])
@@ -55,7 +59,9 @@ if loss is None:
     else:
         loss = 'mse'
 else:
-    del(model['loss'])
+    if 'loss' in model.keys():
+        del(model['loss'])
+
     
 
 if learning_rate is None:
@@ -65,9 +71,10 @@ if learning_rate is None:
     else:
         learning_rate = 0.0001
 else:
-    del(model['learning_rate'])
+    if 'learning_rate' in model.keys():
+        del(model['learning_rate'])
 
-tagset = ['set13', tag]
+tagset = ['set13'] + tags
 
 run = runs.Run(
 
@@ -76,13 +83,13 @@ run = runs.Run(
             dataloader_split_args = dict (
                 basedir = dataset_folder,
                 partitions_id = 'communes',
-                batch_size = 32, #'per_partition:max_batch_size=32',
+                batch_size = batch_size, #32, #'per_partition:max_batch_size=32',
                 cache_size = 1000,
                 shuffle = True,
                 max_chips = None
             ),
 
-            class_weights=dataloader_class.get_class_weights(),
+            class_weights=None,
             outdir = outdir,
 
             wandb_project = wandb_project,
@@ -93,7 +100,8 @@ run = runs.Run(
             loss = loss,
             learning_rate = learning_rate,
 
-            epochs = 50
+            epochs = epochs,
+            early_stopping = early_stopping
 
               )
 

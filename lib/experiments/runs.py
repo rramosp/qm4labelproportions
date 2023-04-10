@@ -3,6 +3,7 @@ tfkl = tf.keras.layers
 from keras.utils.layer_utils import count_params
 from progressbar import progressbar as pbar
 from datetime import datetime
+from time import time
 import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib
@@ -63,6 +64,7 @@ class Run:
                  learning_rate_scheduler = None,
                  learning_rate_scheduler_kwargs = {},
                  measure_mae_on_segmentation = True,
+                 early_stopping = False,
                  wandb_tags = []
                 ):
         autoinit.autoinit(self)
@@ -89,13 +91,27 @@ class Run:
         if not os.path.exists(self.outdir):
             os.makedirs(self.outdir)
 
-        if self.class_weights is None:
-            self.dataloader_split_args['class_groups'] = None
-        else:
+        if self.class_weights is not None:
+            if 'class_groups' in self.dataloader_split_args.keys() and self.dataloader_split_args['class_groups'] is not None:
+                raise ValueError("cannot specify both 'dataloader.class_groups' and 'run.class_weights'")
+            
+            # normalize class weights
             self.class_weights = {k:v/sum(self.class_weights.values()) for k,v in self.class_weights.items()}
             self.dataloader_split_args['class_groups'] = [i for i in self.class_weights.keys() if i!=0]
 
         self.tr, self.ts, self.val = self.dataloader_split_method(**self.dataloader_split_args)
+
+        # if there are no classweights, try first to get default ones from the dataloader
+        if self.class_weights is None:
+            if 'get_default_class_weights' in dir(self.tr):
+                self.class_weights = self.tr.get_default_class_weights()
+                print ("XXX", self.class_weights, self.tr.class_groups)
+                #class_groups = [k for k in self.class_weights.keys() if not (k==0 or (isinstance(k,tuple) and 0 in k))]
+                class_groups = None
+                self.tr.set_class_groups(class_groups)
+                self.ts.set_class_groups(class_groups)
+                self.val.set_class_groups(class_groups)
+                print ("got default class weights from dataloader:", self.class_weights)
 
         # build the model with the known number of classes
         self.number_of_classes = self.tr.number_of_output_classes
@@ -117,15 +133,16 @@ class Run:
         print ("setting input shape to", self.input_shape)
         self.model(x)       
 
-        # if there are no classweights, distribute class weights evently across all classes
+        # if still None, distribute class weights evently across all classes
         if self.class_weights is None:
             n = self.number_of_classes
             self.class_weights = {i: 1/n for i in range(n)}
+            print ("seting equal class weights for all classes", self.class_weights)
 
         self.class_weights_values = list(self.class_weights.values())
-        
+               
         # if no zero in class weights set its weight to zero
-        if not 0 in self.class_weights.keys():
+        if not 0 in self.class_weights.keys() and sum([0 in i for i in self.class_weights.keys() if isinstance(i,tuple)])==0:
             self.class_weights_values = [0] + self.class_weights_values    
 
         # set various stuff
@@ -137,7 +154,7 @@ class Run:
 
         # give model a chance to initalize stuff based on the run
         self.model.init_model_params(self)
-
+        self.init_args['class_weights'] = self.class_weights
         if self.run_id is None:
             self.init_model_params()
             if self.wandb_project is not None:
@@ -157,6 +174,8 @@ class Run:
             else:
                 print ("no model weights file found")
         self.init_args['run_id'] = self.run_id
+
+        self.wandb_tags.append(f"{self.number_of_classes} classes")
         return self
 
     def get_additional_wandb_config(self):
@@ -294,6 +313,9 @@ class Run:
         if self.loss_name in ['multiclass_proportions_rmse', 'rmse']:
             return self.metrics.multiclass_proportions_rmse(p, out)
         
+        if self.loss_name in ['proportions_cross_entropy', 'ppce']:
+            return self.metrics.proportions_cross_entropy(p, out)
+
         if self.loss_name in ['pixel_level_cross_entropy', 'pxce']:
             return self.metrics.pixel_level_categorical_cross_entropy(l, out)
         
@@ -343,6 +365,9 @@ class Run:
         tr_loss = 0
         min_val_loss = np.inf
         lr = self.learning_rate
+        val_loss_history = []
+        self.fit_seconds_history = []
+        self.inference_seconds_history = []
         for epoch in range(self.epochs):
             print (f"\nepoch {epoch+1}", flush=True)
 
@@ -357,32 +382,41 @@ class Run:
 
             # the training loop
             losses = []
+            fit_seconds = 0
             for x,(p,l) in pbar(self.tr):
                 if len(x)==0:
                     continue
                 # trim to unet input shape
                 x,l = self.normitem(x,l)
                 # compute loss
+                start_time = time()
                 loss, out = self.apply_model_and_compute_gradients(x,p,l)
+                fit_seconds += time()-start_time
                 losses.append(loss)
 
             log_dict = {}
             tr_loss = np.mean(losses)
             log_dict['train/loss'] = tr_loss
-            
+            log_dict['train/seconds'] = fit_seconds
+
+            self.fit_seconds_history.append(fit_seconds)
+
             # measure stuff on validation for reporting
             losses, ious, maeps, maeps_perclass, rmaeps, rmaeps_perclass = [], [], [], [], [], []
             losses_components = {}
             max_value = np.min([len(self.val),self.n_batches_online_val ]).astype(int)
             self.pixel_classification_metrics = metrics.PixelClassificationMetrics(number_of_classes=self.number_of_classes)
             self.pixel_classification_metrics.reset_state()
+            inference_seconds = 0
             for i, (x, (p,l)) in pbar(enumerate(self.val), max_value=max_value):
                 if i>=self.n_batches_online_val:
                     break
 
                 # predict
                 x,l = self.normitem(x,l)
+                start_time = time()
                 out = self.model(x)
+                inference_seconds += time()-start_time
                 self.model.save_last_input_output_pair(x, out)
 
                 # compute losses
@@ -417,7 +451,7 @@ class Run:
                     ious.append(self.metrics.compute_iou(l,out_segmentation))
                     self.pixel_classification_metrics.update_state(l,out_segmentation)
 
-                    
+            self.inference_seconds_history.append(inference_seconds)
 
             # summarize validation stuff
             txt_metrics = ""
@@ -452,6 +486,7 @@ class Run:
             if val_loss < min_val_loss:
                 print ("new min val loss")
                 min_val_loss = val_loss
+                print (f"saving model weights into {run_file_path}")
                 self.model.save_weights(run_file_path)
 
                 if self.wandb_project is not None:
@@ -470,6 +505,7 @@ class Run:
             # log to wandb
             if self.wandb_project is not None:
                 log_dict["val/loss"] = val_loss
+                log_dict["val/seconds"] = inference_seconds
 
                 for k,v in val_loss_components:
                     log_dict[f'val/{k}'] = v
@@ -488,8 +524,14 @@ class Run:
             if self.learning_rate_scheduler_fn is not None:
                 txt_metrics += f" lr {lr:.7f}"
             # log to screen
-            print (f"epoch {epoch:3d}, train loss {tr_loss:.5f}", flush=True)
-            print (f"epoch {epoch:3d},   val loss {val_loss:.5f} {txt_metrics} {val_loss_components}", flush=True)
+            print (f"epoch {epoch+1:3d}, train loss {tr_loss:.5f} fit seconds {fit_seconds:.3f}", flush=True)
+            print (f"epoch {epoch+1:3d},   val loss {val_loss:.5f} {txt_metrics} {val_loss_components} inference seconds {inference_seconds:.3f}", flush=True)
+
+            if self.early_stopping and val_loss >= 0.999*np.mean(val_loss_history[-10:]):
+                print ("early stopping")
+                break
+
+            val_loss_history.append(val_loss)
 
     def run(self, plot_val_sample=True):
         """
@@ -533,6 +575,14 @@ class Run:
                         if self.model.produces_segmentation_probabilities():
                             config[f"f1::{part}"] = r[part]['f1 global']
                             config[f"iou::{part}"] = r[part]['iou global']
+
+
+                    config[f"fit_seconds.mean"] = np.mean(self.fit_seconds_history[2:])
+                    config[f"fit_seconds.std"] = np.std(self.fit_seconds_history[2:])
+
+                    config[f"inference_seconds.mean"] = np.mean(self.inference_seconds_history[2:])
+                    config[f"inference_seconds.std"] = np.std(self.inference_seconds_history[2:])
+
                     wandb.config.update(config)
 
                 self.empty_caches()
@@ -542,6 +592,8 @@ class Run:
                 print ("--------")
                 print (r[[i!='loss' and 'global' not in i for i in r.index]])
                 print ("--------")
+                print (f"fit seconds:       mean {np.mean(self.fit_seconds_history):.3f}, std {np.std(self.fit_seconds_history):.5f}")
+                print (f"inference seconds: mean {np.mean(self.inference_seconds_history):.3f}, std {np.std(self.inference_seconds_history):.5f}")
                 wandb.finish(quiet=True)
 
             except KeyboardInterrupt:

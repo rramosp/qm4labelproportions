@@ -112,20 +112,18 @@ class Chip:
                       tuples will assigned the new classids in the order specified.
                       groups with a single item can be specified with a tuple of len 1
                       or just the class number.
-
         returns: a new chip with class grouped as specified
         """
-
         label = self.data['label']
         class_groups = [i if isinstance(i, tuple) else (i,) for i in class_groups]
 
         # check class 0 is not included since it is the default class
         for g in class_groups:
-            if 0 in g:
+            if 0 in g and len(g)!=1:
                 raise ValueError("cannot include class 0 in any group, since it is the default class")
 
         selected_classids = [i for j in class_groups for i in j]
-        number_of_output_classes = len(class_groups)+1
+        number_of_output_classes = len(class_groups) + (0 if 0 in class_groups else 1)
         
         if len(selected_classids) != len(np.unique(selected_classids)):
             raise ValueError("repeated classes")
@@ -188,8 +186,7 @@ class Chip:
             if 'proportions' in v.keys():
                 v = v['proportions']
             if np.allclose(sum(v.values()),0, atol=1e-4):
-                
-                raise ValueError(f"internal error: mapped proportions do not add up to 1 in {self.filename}, they add up to {sum(v.values())}")
+                raise ValueError(f"internal error: mapped proportions do not add up to 1 in {self.filename}, they add up to {sum(v.values())}. check maybe the class_groups")
 
 
         return r        

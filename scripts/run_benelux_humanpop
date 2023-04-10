@@ -1,0 +1,17 @@
+DATASET=/opt/data/benelux/benelux_sentinel2-rgb-median-2020_humanpop2015
+DATALOADER=S2_HumanPopulation_DataLoader
+
+python run.py --conf classicconfs.downsampl05 --dataset_folder $DATASET --dataloader_class $DATALOADER --learning_rate 0.001 --loss mse --epochs 100 --tag humanpop
+python run.py --conf kqmconfs.qmp03           --dataset_folder $DATASET --dataloader_class $DATALOADER --learning_rate 0.001 --loss mse --epochs 100 --tag humanpop
+
+python run.py --conf classicconfs.smvgg16_mse    --dataset_folder $DATASET --dataloader_class $DATALOADER --learning_rate 0.0001 --loss mse --epochs 50 --tag humanpop
+python run.py --conf classicconfs.unet04         --dataset_folder $DATASET --dataloader_class $DATALOADER --learning_rate 0.0001 --loss mse --epochs 50 --tag humanpop
+python run.py --conf classicconfs.smresnet18_mse --dataset_folder $DATASET --dataloader_class $DATALOADER --learning_rate 0.0001 --loss mse --epochs 50 --tag humanpop
+
+python run.py --conf classicconfs.downsampl05 --dataset_folder $DATASET --dataloader_class $DATALOADER --learning_rate 0.001  --loss pxce --epochs 100 --tag humanpop
+python run.py --conf classicconfs.smvgg16_mse --dataset_folder $DATASET --dataloader_class $DATALOADER --learning_rate 0.0001 --loss pxce --epochs 50 --tag humanpop
+python run.py --conf classicconfs.unet04      --dataset_folder $DATASET --dataloader_class $DATALOADER --learning_rate 0.0001 --loss pxce --epochs 50 --tag humanpop
+python run.py --conf classicconfs.smresnet18_mse --dataset_folder $DATASET --dataloader_class $DATALOADER --learning_rate 0.0001 --loss pxce --epochs 50 --tag humanpop
+
+#python run.py --conf classicconfs.smresnet18_mse --dataset_folder $DATASET --dataloader_class $DATALOADER --learning_rate 0.00001 --loss pxce --tag humanpop
+

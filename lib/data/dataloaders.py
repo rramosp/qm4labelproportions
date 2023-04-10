@@ -32,6 +32,38 @@ def gethash(s: str):
     k = str(hex(k))[2:].zfill(13)
     return k
 
+def get_dataloader(basedir, where, what, 
+                   max_chips = None, 
+                   shuffle=True, 
+                   batch_size=32, 
+                   partitions_id='communes', 
+                   class_groups=None,
+                   split_method='split_per_partition'):
+
+    if what=='soilph':
+        dataloader_split_method = eval(f"S2_SoilPH_DataLoader.{split_method}")
+    elif what=='esa-world-cover':
+        dataloader_split_method = eval(f"S2_ESAWorldCover_DataLoader.{split_method}")
+    elif what=='humanpop2015':
+        dataloader_split_method = eval(f"S2_HumanPopulation_DataLoader.{split_method}")
+    elif what=='treecover2020':
+        dataloader_split_method = eval(f"S2_TreeCover_DataLoader.{split_method}")
+    else:
+        print (f"ERROR! what='{what}' not recognized")
+
+    dataloader_split_args = dict (
+        basedir = f'{basedir}/{where}/{where}_sentinel2-rgb-median-2020_{what}',
+        partitions_id = partitions_id,
+        batch_size = batch_size, #'per_partition:max_batch_size=32',
+        cache_size = 1000,
+        shuffle = shuffle,
+        max_chips = max_chips,
+        class_groups = class_groups
+    )
+
+    return dataloader_split_method, dataloader_split_args
+
+
 class GeoDataLoader(tf.keras.utils.Sequence):
     """
     from https://stanford.edu/~shervine/blog/keras-how-to-generate-data-on-the-fly
@@ -221,18 +253,10 @@ class GeoDataLoader(tf.keras.utils.Sequence):
         self.partitions_id = partitions_id
         self.cache = {}
         self.cache_size = cache_size
+        self.class_groups = class_groups
 
         if 'data' in os.listdir(basedir):
             basedir = f"{basedir}/data"
-
-        if class_groups is not None:
-            # check for zeros
-            for g in class_groups:
-                if not isinstance(g, int) and not isinstance(g, tuple):
-                    raise ValueError("groups must be integer (single classes) or tuples")
-
-                if g==0 or (isinstance(g, tuple) and 0 in g):
-                    raise ValueError("cannot include class 0 in any group, since it is the default class")
 
         self.basedir = basedir
         if chips_basedirs is None:
@@ -251,12 +275,9 @@ class GeoDataLoader(tf.keras.utils.Sequence):
             self.chips_basedirs = self.chips_basedirs[:max_chips]
             
         self.number_of_input_classes = self.get_number_of_input_classes()
-        self.class_groups = class_groups
-        if self.class_groups is None:
-            self.number_of_output_classes = self.number_of_input_classes    
-        else:
-            self.number_of_output_classes = len(self.class_groups)+1
 
+        self.set_class_groups(class_groups)
+                
         self.max_batch_size = None
         if not isinstance(self.batch_size, int) and self.batch_size.startswith('per_partition'):
 
@@ -275,7 +296,29 @@ class GeoDataLoader(tf.keras.utils.Sequence):
 
         self.on_epoch_end()
 
-        
+    def set_class_groups(self, class_groups):
+
+        if class_groups is None or class_groups=='default':
+            cg = self.get_default_class_weights().keys() 
+            class_groups = [i for i in cg if i!=0 and sum([0 in ii for ii in cg if isinstance(ii,tuple)])!=0]
+
+        elif class_groups is not None:
+            # as zero is the default class, it cannot be in a group 
+            # check user has not included zeros in any class groups (default background class)
+            for g in class_groups:
+                if g==0:
+                    raise ValueError("cannot include 0 in class groups")
+
+                if not isinstance(g, int) and not isinstance(g, tuple):
+                    raise ValueError("groups must be integer (single classes) or tuples")
+
+                if isinstance(g, tuple) and 0 in g:
+                    raise ValueError("cannot include class 0 in any group, since it is the default class")
+
+        self.class_groups = class_groups
+        self.number_of_output_classes = len(self.class_groups)+1
+
+        self.empty_cache()
 
     def load_partitions_map(self):
         partitions_map_file = f'{self.basedir}/../partitions_map_{self.hashcode}.csv'   
@@ -368,7 +411,6 @@ class GeoDataLoader(tf.keras.utils.Sequence):
             return self.cache[chip_filename]
         else:
             chip = Chip(f"{self.basedir}/{chip_filename}", number_of_classes=self.number_of_input_classes)
-
             # map classes if required
             if self.class_groups is not None:
                 chip = chip.group_classes(self.class_groups)
@@ -397,6 +439,7 @@ class GeoDataLoader(tf.keras.utils.Sequence):
             r = [chipimg, labels, p]
             if len(self.cache) < self.cache_size:
                 self.cache[chip_filename] = r
+
             return r
 
     def __data_generation(self, batch_chips_basedirs):
@@ -427,6 +470,23 @@ class GeoDataLoader(tf.keras.utils.Sequence):
         props = np.r_[props].sum(axis=0)
         props = props / sum(props)
         return props
+    
+    def get_default_class_weights(self):
+
+        class_weights = OrderedDict()
+        if self.class_groups is None or self.class_groups=='default':
+            n = self.get_number_of_input_classes()
+            for i in range(n):
+                class_weights[i] = 1
+        else:
+            cg = list(self.class_groups)
+            if not 0 in cg and sum([0 in i for i in cg if isinstance(i, tuple)])==0:
+                cg = [0] + cg
+
+            for k in cg:
+                class_weights[k] = 1/len(cg)
+
+        return class_weights
 
     def plot_class_distribution(self):
         props = self.get_class_distribution()
@@ -519,15 +579,16 @@ class S2_ESAWorldCover_DataLoader(GeoDataLoader):
     def get_number_of_input_classes(self):
         return 12
     
-    @classmethod    
-    def get_class_weights(cls):
-
-        class_weights = OrderedDict()
-        class_weights[0] = 1
-        class_weights[1] = 1
-        class_weights[(2,3,6)] = 1
-        class_weights[4] = 1
-        class_weights[5] = 1
+    def get_default_class_weights(self):
+        if self.class_groups is None and self.get_number_of_input_classes()>=7:
+            class_weights = OrderedDict()
+            class_weights[0] = 1
+            class_weights[1] = 1
+            class_weights[(2,3,6)] = 1
+            class_weights[4] = 1
+            class_weights[5] = 1
+        else:
+            class_weights = super().get_default_class_weights()
 
         return class_weights
 
@@ -543,7 +604,7 @@ class S2_EUCrop_DataLoader(GeoDataLoader):
     def get_number_of_input_classes(self):
         return 23
 
-class SoilPH_DataLoader(GeoDataLoader):
+class S2_SoilPH_DataLoader(GeoDataLoader):
 
     @classmethod
     def split_per_partition(cls, **kwargs):
@@ -552,19 +613,54 @@ class SoilPH_DataLoader(GeoDataLoader):
         """
         return super().split_per_partition(**kwargs)
 
-    def get_number_of_input_classes(self):
+    def get_number_of_input_classes(cls):
         return 5
+        
+class S2_HumanPopulation_DataLoader(GeoDataLoader):
 
     @classmethod
-    def get_class_weights(cls):
+    def split_per_partition(cls, **kwargs):
+        """
+        added so that instrospection on this method refers to this class (and not to the parent)
+        """
+        return super().split_per_partition(**kwargs)
 
+    @classmethod
+    def get_number_of_input_classes(cls):
+        return 31
+    
+    @classmethod
+    def get_default_class_weights(cls):
         class_weights = OrderedDict()
-        class_weights[0] = 1
-        class_weights[1] = 1
-        class_weights[2] = 1
-        class_weights[3] = 1
-        class_weights[4] = 1
+        class_weights[0] = .1
+        class_weights[tuple(range(1,10))]  = 1
+        class_weights[tuple(range(10,31))] = 1
 
         return class_weights
 
 
+class S2_TreeCover_DataLoader(GeoDataLoader):
+
+    @classmethod
+    def split_per_partition(cls, **kwargs):
+        return super().split_per_partition(**kwargs)
+
+    @classmethod
+    def get_number_of_input_classes(cls):
+        return 5
+    
+    def get_default_class_weights(self):
+        if self.class_groups is None:
+            #class_weights = OrderedDict()
+            #class_weights[0] = 1
+            #class_weights[1] = 1
+            #class_weights[2] = 1
+            #class_weights[3] = 1
+            #class_weights[4] = .1
+            class_weights = OrderedDict()
+            class_weights[(0,1,2)] = 1
+            class_weights[(3,4)] = .01
+        else:
+            class_weights = super().get_default_class_weights()
+
+        return class_weights
