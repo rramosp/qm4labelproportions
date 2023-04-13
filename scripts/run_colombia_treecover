@@ -1,15 +1,14 @@
 DATASET=/opt/data/colombia-ne/colombia-ne_sentinel2-rgb-median-2020_treecover2020
 DATALOADER=S2_TreeCover_DataLoader
 
-python run.py --conf classicconfs.downsampl09 --dataset_folder $DATASET --dataloader_class $DATALOADER --learning_rate 0.001 --loss mse --batch_size 32 --epochs 100 --tag treecover
-python run.py --conf kqmconfs.qmp03           --dataset_folder $DATASET --dataloader_class $DATALOADER --learning_rate 0.001 --loss mse --batch_size 32 --epochs 100 --tag treecover
-python run.py --conf classicconfs.smvgg16_mse    --dataset_folder $DATASET --dataloader_class $DATALOADER --learning_rate 0.0001 --loss mse --batch_size 32 --epochs 50 --tag treecover
-python run.py --conf classicconfs.unet04         --dataset_folder $DATASET --dataloader_class $DATALOADER --learning_rate 0.0001 --loss mse --batch_size 32 --epochs 50 --tag treecover
-python run.py --conf classicconfs.smresnet18_mse --dataset_folder $DATASET --dataloader_class $DATALOADER --learning_rate 0.0001 --loss mse --batch_size 32 --epochs 50 --tag treecover
+#python run.py --conf classicconfs.downsampl09    --dataset_folder $DATASET --dataloader_class $DATALOADER --learning_rate 0.0001 --loss mse --batch_size 32 --epochs 100 --tag treecover
+#python run.py --conf kqmconfs.qmp03              --dataset_folder $DATASET --dataloader_class $DATALOADER --learning_rate 0.0001 --loss mse --batch_size 32 --epochs 100 --tag treecover
+#python run.py --conf classicconfs.smvgg16_mse    --dataset_folder $DATASET --dataloader_class $DATALOADER --learning_rate 0.0001 --loss mse --batch_size 32 --epochs 50 --tag treecover
+#python run.py --conf classicconfs.unet04         --dataset_folder $DATASET --dataloader_class $DATALOADER --learning_rate 0.0001 --loss mse --batch_size 32 --epochs 50 --tag treecover
+#python run.py --conf classicconfs.smresnet18_mse --dataset_folder $DATASET --dataloader_class $DATALOADER --learning_rate 0.0001 --loss mse --batch_size 32 --epochs 50 --tag treecover
 
-python run.py --conf classicconfs.downsampl09 --dataset_folder $DATASET --dataloader_class $DATALOADER --learning_rate 0.001  --loss pxce --batch_size 32 --epochs 100 --tag treecover
+#python run.py --conf classicconfs.downsampl09 --dataset_folder $DATASET --dataloader_class $DATALOADER --learning_rate 0.0001  --loss pxce --batch_size 32 --epochs 100 --tag treecover
 python run.py --conf classicconfs.smvgg16_mse --dataset_folder $DATASET --dataloader_class $DATALOADER --learning_rate 0.0001 --loss pxce --batch_size 32 --epochs 50 --tag treecover
 python run.py --conf classicconfs.unet04      --dataset_folder $DATASET --dataloader_class $DATALOADER --learning_rate 0.0001 --loss pxce --batch_size 32 --epochs 50 --tag treecover
-python run.py --conf classicconfs.smresnet18_mse --dataset_folder $DATASET --dataloader_class $DATALOADER --learning_rate 0.0001 --loss pxce --batch_size 32 --epochs 50 --tag treecover
-
+python run.py --conf classicconfs.smresnet18_mse --dataset_folder $DATASET --dataloader_class $DATALOADER --learning_rate 0.0001 --loss pxce --batch_size 32 --epochs 100 --tag treecover
 

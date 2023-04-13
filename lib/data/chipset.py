@@ -14,6 +14,7 @@ import geopandas as gpd
 from progressbar import progressbar as pbar
 import hashlib
 from itertools import islice
+import copy
 
 def batched(iterable, n):
     "Batch data into tuples of length n. The last batch may be shorter."
@@ -79,17 +80,17 @@ class Chip:
         # try to infer the number of classes from data in this chip
         if number_of_classes is None:
             # take the max number present in labels or proportions
-            number_of_classes = np.max([np.max(np.unique(self.label)), 
-                                        np.max([int(k) for v in self.proportions_flattened.values() if isinstance(v, dict) for k in v.keys() ])])
+            number_of_classes = np.max([np.max(np.unique(self.label))+1, 
+                                        np.max([int(k)+1 for v in self.proportions_flattened.values() if isinstance(v, dict) for k in v.keys() ])])
 
         self.number_of_classes = number_of_classes
 
     def clone(self):
         r = self.__class__()
-        r.data = self.data.copy()
+        r.data = copy.deepcopy(self.data)
         r.number_of_classes = self.number_of_classes
         r.filename = self.filename
-        r.proportions_flattened = self.proportions_flattened
+        r.proportions_flattened = copy.deepcopy(self.proportions_flattened)
         for k,v in r.data.items():
             exec(f"r.{k}=v")
         return r
@@ -102,36 +103,40 @@ class Chip:
         creates a new chip with the same contents but with classes grouped by modifying
         the label and the class proportions
 
-        class_groups: list of tuples of classids. For instance:
-                      [ (2,3), (5,), 4 ] will map 
+        class_groups: list of tuples of classids. Must contain all classes. For instance:
+                      [ 0, (2,3), (5,), 4 ] will map 
+                          - class 0 to class 1
                           - classes 2 and 3 to class 1
                           - class 5 to class 2
                           - class 4 to class 3
-                          - the rest of the classes to class 0
 
                       tuples will assigned the new classids in the order specified.
                       groups with a single item can be specified with a tuple of len 1
                       or just the class number.
+
+                      input class 0 must be in the first class group
         returns: a new chip with class grouped as specified
         """
+
+        for g in class_groups:
+            if not isinstance(g, int) and not isinstance(g, tuple):
+                    raise ValueError("groups must be integer (single classes) or tuples")
+
         label = self.data['label']
+
         class_groups = [i if isinstance(i, tuple) else (i,) for i in class_groups]
 
-        # check class 0 is not included since it is the default class
-        for g in class_groups:
-            if 0 in g and len(g)!=1:
-                raise ValueError("cannot include class 0 in any group, since it is the default class")
+        if not(class_groups[0] == 0 or (isinstance(class_groups[0], tuple) and 0 in class_groups[0])):
+            raise ValueError("class 0 must be in the first group")
+        
 
         selected_classids = [i for j in class_groups for i in j]
-        number_of_output_classes = len(class_groups) + (0 if 0 in class_groups else 1)
+        number_of_output_classes = len(class_groups)
         
-        if len(selected_classids) != len(np.unique(selected_classids)):
-            raise ValueError("repeated classes")
+        if sorted(selected_classids)!=list(range(self.number_of_classes)):
+            raise ValueError(f"incorrect mapping for {self.number_of_classes} classes. maybe repeated or missing classes")
 
-        if np.max(selected_classids)>=self.number_of_classes:
-            raise ValueError(f"incorrect class id (this dataset contains {self.number_of_classes})")
-
-        class_mapping = {k2:(i+1) for i,k1 in enumerate(class_groups) for k2 in k1}
+        class_mapping = {k2:i for i,k1 in enumerate(class_groups) for k2 in k1}
 
         mapped_label = np.zeros_like(label)
         for original_class, mapped_class in class_mapping.items():

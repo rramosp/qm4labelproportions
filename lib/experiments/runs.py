@@ -12,6 +12,7 @@ from ..data import dataloaders
 from ..utils import autoinit 
 from . import metrics
 from . import schedulers
+from . import plots
 from rlxutils import subplots
 import segmentation_models as sm
 import seaborn as sns
@@ -97,21 +98,17 @@ class Run:
             
             # normalize class weights
             self.class_weights = {k:v/sum(self.class_weights.values()) for k,v in self.class_weights.items()}
-            self.dataloader_split_args['class_groups'] = [i for i in self.class_weights.keys() if i!=0]
+            self.dataloader_split_args['class_groups'] = [i for i in self.class_weights.keys()]
 
         self.tr, self.ts, self.val = self.dataloader_split_method(**self.dataloader_split_args)
 
         # if there are no classweights, try first to get default ones from the dataloader
-        if self.class_weights is None:
-            if 'get_default_class_weights' in dir(self.tr):
-                self.class_weights = self.tr.get_default_class_weights()
-                print ("XXX", self.class_weights, self.tr.class_groups)
-                #class_groups = [k for k in self.class_weights.keys() if not (k==0 or (isinstance(k,tuple) and 0 in k))]
-                class_groups = None
-                self.tr.set_class_groups(class_groups)
-                self.ts.set_class_groups(class_groups)
-                self.val.set_class_groups(class_groups)
-                print ("got default class weights from dataloader:", self.class_weights)
+        if self.class_weights is None:        
+            self.class_weights = self.tr.get_default_class_weights()
+            self.tr.set_class_groups()
+            self.ts.set_class_groups()
+            self.val.set_class_groups()
+            print ("got default class weights from dataloader:", self.class_weights)
 
         # build the model with the known number of classes
         self.number_of_classes = self.tr.number_of_output_classes
@@ -201,41 +198,40 @@ class Run:
     def get_loss_components(self, p, out):
         return None
 
-    def get_val_sample(self, n=10):
-        batch_size_backup = self.val.batch_size
-        self.val.batch_size = n
-        self.val.on_epoch_end()
-        gen_val = iter(self.val) 
-        val_x, (val_p, val_l) = gen_val.__next__()
-        val_x,val_l = self.normitem(val_x,val_l)
-        val_out = self.model(val_x)
-        if self.model.produces_segmentation_probabilities():
-            val_out_segmentation = self.model.predict_segmentation(val_x)
-        else:
-            val_out_segmentation = None
-
-        if isinstance(val_out, list):
-            val_out = [i.numpy() for i in val_out]
-        else:
-            val_out = val_out.numpy()
-
-        # restore val dataset config
-        self.val.batch_size = batch_size_backup
-        self.val.on_epoch_end()
-        return val_x, val_p, val_l, val_out, val_out_segmentation
-
-    def plot_val_sample(self, n=10, return_fig = False):
+    def get_val_sample(self, n=10, shuffle=False):
         
-        shuffle = self.val.shuffle
-        self.val.shuffle = False
-        val_x, val_p, val_l, val_out, val_out_segmentation = self.get_val_sample(n=n)
+        batch_size_backup = self.val.batch_size
+        shuffle_backup = self.val.shuffle
+        self.val.rebatch(n, shuffle=shuffle)
+        
+        
+        x, (p, l) = self.val[0]
+        x,l = self.normitem(x,l)
+        out = self.model(x)
+        if self.model.produces_segmentation_probabilities():
+            out_segmentation = self.model.predict_segmentation(x).numpy()
+        else:
+            out_segmentation = None
+
+        if isinstance(out, list):
+            out = [ii.numpy() for ii in out]
+        else:
+            out = out.numpy()
+        
+        # restore val dataset config
+        self.val.rebatch(batch_size_backup, shuffle=shuffle_backup)
+        return x, p, l, out, out_segmentation
+
+
+
+    def plot_val_sample(self, n=10, return_fig = False, shuffle=False):
+        
+        shuffle_backup = self.val.shuffle
         self.val.shuffle = shuffle
+        val_x, val_p, val_l, val_out, val_out_segmentation = self.get_val_sample(n=n, shuffle=shuffle)
+        self.val.shuffle = shuffle_backup
         
         n = len(val_x)
-
-        tval_out_segmentation = np.argmax(val_out_segmentation, axis=-1)
-        cmap=matplotlib.colors.ListedColormap([plt.cm.gist_ncar(i/self.number_of_classes) \
-                                                for i in range(self.number_of_classes)])
 
         n_rows = 4 if self.model.produces_segmentation_probabilities() else 3
         for ax, ti in subplots(range(n*n_rows), n_cols=n, usizex=3.5):
@@ -243,53 +239,17 @@ class Run:
             row = ti // n
             
             if row==0:
-                plt.imshow(val_x[i])        
-                if i==0: 
-                    plt.ylabel("input rgb")
-                    plt.title(f"{self.partitions_id}\n{self.loss_name}")
+                plots.plot_img(val_x[i], title=self.val.batch_chips_basedirs[i], ylabel='input rgb' if i==0 else None)
 
             if row==1:
-                plt.imshow(val_l[i], vmin=0, vmax=self.number_of_classes, cmap=cmap, interpolation='none')
-                if i==0: 
-                    plt.ylabel("labels")
-                    
-                cbar = plt.colorbar(ax=ax, ticks=range(self.number_of_classes))
-                cbar.ax.set_yticklabels([f"{i}" for i in range(self.number_of_classes)])  # vertically oriented colorbar
+                plots.plot_label(self.number_of_classes, val_l[i], ylabel='labels' if i==0 else None, add_color_bar=True)
                     
             if row==2 and self.model.produces_segmentation_probabilities():
-                cmetrics = metrics.PixelClassificationMetrics(number_of_classes=self.number_of_classes)
-                cmetrics.reset_state()
-                cmetrics.update_state(val_l[i:i+1], val_out_segmentation[i:i+1])
-                f1 = cmetrics.result('f1', 'micro')
-                iou = self.metrics.compute_iou(val_l[i:i+1], val_out_segmentation[i:i+1])
-                
-                title = f"onchip f1 {f1:.3f} iou {iou:.3f}"
-                plt.imshow(tval_out_segmentation[i], vmin=0, vmax=self.number_of_classes, cmap=cmap, interpolation='none')
-                cbar = plt.colorbar(ax=ax, ticks=range(self.number_of_classes))
-                cbar.ax.set_yticklabels([f"{i}" for i in range(self.number_of_classes)])  # vertically oriented colorbar
-                plt.title(title)
-                if i==0: 
-                    plt.ylabel("thresholded output")
-                
+                plots.plot_segmentation_probabilities(self, val_l[i], val_out[i], val_out_segmentation[i], 
+                                                     ylabel='thresholded output' if i==0 else None)
+                  
             if (row==2 and not self.model.produces_segmentation_probabilities()) or row==3:
-                nc = self.number_of_classes
-                y_pred_proportions = self.metrics.get_y_pred_as_proportions(val_out[i:i+1], argmax=True)[0]
-                onchip_proportions = self.metrics.get_class_proportions_on_masks(val_l[i:i+1])[0]
-
-                maec = self.metrics.multiclass_proportions_mae_on_chip(val_l[i:i+1], val_out[i:i+1])
-                rmaec = self.metrics.multiclass_proportions_rmae_on_chip(val_l[i:i+1], val_out[i:i+1])
-
-                plt.bar(np.arange(nc)-.2, val_p[i], 0.2, label="on partition", alpha=.5)
-                plt.bar(np.arange(nc), onchip_proportions, 0.2, label="on chip", alpha=.5)
-                plt.bar(np.arange(nc)+.2, y_pred_proportions, 0.2, label="pred", alpha=.5)
-                if i in [0, n//2, n-1]:
-                    plt.legend()
-                plt.grid();
-                plt.xticks(np.arange(nc), np.arange(nc));
-                plt.title(f"mae {maec:.3f} rmae {rmaec:.3f}")            
-                plt.xlabel("class number")
-                plt.ylim(0,1)
-                plt.ylabel("proportions")
+                plots.plot_proportions_prediction(self, val_p[i], val_l[i], val_out[i], show_legend= i in [0, n//2, n-1])                
                 
         if return_fig:
             fig = plt.gcf()

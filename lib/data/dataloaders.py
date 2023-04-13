@@ -15,7 +15,7 @@ from progressbar import progressbar as pbar
 import hashlib
 from itertools import islice
 from collections import OrderedDict
-
+from skimage import exposure
 from .chipset import *
 
 def batched(iterable, n):
@@ -230,7 +230,8 @@ class GeoDataLoader(tf.keras.utils.Sequence):
                  chips_basedirs=None,
                  max_chips = None,
                  class_groups = None,
-                 save_partitions_map = False
+                 save_partitions_map = False,
+                 enhance = False
                  ):
 
         """
@@ -254,6 +255,8 @@ class GeoDataLoader(tf.keras.utils.Sequence):
         self.cache = {}
         self.cache_size = cache_size
         self.class_groups = class_groups
+        self.max_chips = max_chips
+        self.enhance = enhance
 
         if 'data' in os.listdir(basedir):
             basedir = f"{basedir}/data"
@@ -264,6 +267,9 @@ class GeoDataLoader(tf.keras.utils.Sequence):
             self.chips_basedirs = cs.files
         else:
             self.chips_basedirs = chips_basedirs    
+
+        # set default order of chips
+        self.chips_basedirs = sorted(self.chips_basedirs)
 
         self.save_partitions_map = save_partitions_map 
         self.hashcode = gethash("".join(np.sort(self.chips_basedirs)))
@@ -296,27 +302,17 @@ class GeoDataLoader(tf.keras.utils.Sequence):
 
         self.on_epoch_end()
 
-    def set_class_groups(self, class_groups):
+
+    def get_name(self):
+        return "Generic GeoDataLoader"
+
+    def set_class_groups(self, class_groups=None):
 
         if class_groups is None or class_groups=='default':
-            cg = self.get_default_class_weights().keys() 
-            class_groups = [i for i in cg if i!=0 and sum([0 in ii for ii in cg if isinstance(ii,tuple)])!=0]
-
-        elif class_groups is not None:
-            # as zero is the default class, it cannot be in a group 
-            # check user has not included zeros in any class groups (default background class)
-            for g in class_groups:
-                if g==0:
-                    raise ValueError("cannot include 0 in class groups")
-
-                if not isinstance(g, int) and not isinstance(g, tuple):
-                    raise ValueError("groups must be integer (single classes) or tuples")
-
-                if isinstance(g, tuple) and 0 in g:
-                    raise ValueError("cannot include class 0 in any group, since it is the default class")
+            class_groups = self.get_default_class_weights().keys()
 
         self.class_groups = class_groups
-        self.number_of_output_classes = len(self.class_groups)+1
+        self.number_of_output_classes = len(self.class_groups)
 
         self.empty_cache()
 
@@ -372,6 +368,13 @@ class GeoDataLoader(tf.keras.utils.Sequence):
     def empty_cache(self):
         self.cache = {}
 
+
+    def rebatch(self, batch_size, shuffle=None):
+        self.batch_size = batch_size
+        if shuffle is not None:
+            self.shuffle = shuffle
+        self.on_epoch_end()
+
     def __len__(self):
         'Denotes the number of batches per epoch'
         if not isinstance(self.batch_size, int) and self.batch_size.startswith('per_partition'):
@@ -392,17 +395,17 @@ class GeoDataLoader(tf.keras.utils.Sequence):
     def __getitem__(self, index):
         'Generate one batch of data'
         if not isinstance(self.batch_size, int) and self.batch_size.startswith('per_partition'):
-            batch_chips_basedirs = self.partitions_batches.iloc[index].chip_id
+            self.batch_chips_basedirs = self.partitions_batches.iloc[index].chip_id
 
         else:
             # Generate indexes of the batch
             indexes = self.indexes[index*self.batch_size:(index+1)*self.batch_size]
 
             # Find list of IDs
-            batch_chips_basedirs = [self.chips_basedirs[k] for k in indexes]
+            self.batch_chips_basedirs = [self.chips_basedirs[k] for k in indexes]
 
         # Generate data
-        x = self.__data_generation(batch_chips_basedirs)
+        x = self.__data_generation(self.batch_chips_basedirs)
 
         return x
 
@@ -443,21 +446,28 @@ class GeoDataLoader(tf.keras.utils.Sequence):
             return r
 
     def __data_generation(self, batch_chips_basedirs):
-        'Generates data containing batch_size samples' 
-        # X : (n_samples, *dim, n_channels)
-        # Initialization
+
         X = np.empty((len(batch_chips_basedirs), 100, 100, 3), dtype=np.float32)
         labels = np.zeros((len(batch_chips_basedirs), 100, 100), dtype=np.int16)
         partition_proportions = np.empty((len(batch_chips_basedirs), self.number_of_output_classes), dtype=np.float32)
 
         # Assemble data in a batch
         for i, chip_id in enumerate(batch_chips_basedirs):
-            chip_mean, label, p = self.load_chip(chip_id)
-            X[i,] = chip_mean/256
+            chip, label, p = self.load_chip(chip_id)
+            chip = chip /  256
+
+            if self.enhance:
+                percentiles = np.percentile(chip, (.5, 99.5))
+                chip = exposure.rescale_intensity(chip, in_range=tuple(percentiles))
+
+            X[i,] = chip
             labels[i,] = label
             partition_proportions[i,] = p
 
         return X, (partition_proportions, labels)
+
+    def get_by_ids(self, batch_chips_basedirs):
+        return self.__data_generation(batch_chips_basedirs)
 
     def get_partition_ids(self):
         return Chip(f"{self.basedir}/{self.chips_basedirs[0]}").get_partition_ids()
@@ -477,11 +487,9 @@ class GeoDataLoader(tf.keras.utils.Sequence):
         if self.class_groups is None or self.class_groups=='default':
             n = self.get_number_of_input_classes()
             for i in range(n):
-                class_weights[i] = 1
+                class_weights[i] = 1/n
         else:
             cg = list(self.class_groups)
-            if not 0 in cg and sum([0 in i for i in cg if isinstance(i, tuple)])==0:
-                cg = [0] + cg
 
             for k in cg:
                 class_weights[k] = 1/len(cg)
@@ -576,13 +584,16 @@ class S2_ESAWorldCover_DataLoader(GeoDataLoader):
         """
         return super().split_per_partition(**kwargs)
 
+    def get_name(self):
+        return "esa world cover"
+    
     def get_number_of_input_classes(self):
         return 12
     
     def get_default_class_weights(self):
         if self.class_groups is None and self.get_number_of_input_classes()>=7:
             class_weights = OrderedDict()
-            class_weights[0] = 1
+            class_weights[(0,7,8,9,10,11)] = 1
             class_weights[1] = 1
             class_weights[(2,3,6)] = 1
             class_weights[4] = 1
@@ -603,6 +614,10 @@ class S2_EUCrop_DataLoader(GeoDataLoader):
 
     def get_number_of_input_classes(self):
         return 23
+    
+
+    def get_name(self):
+        return "eu crop"
 
 class S2_SoilPH_DataLoader(GeoDataLoader):
 
@@ -615,7 +630,11 @@ class S2_SoilPH_DataLoader(GeoDataLoader):
 
     def get_number_of_input_classes(cls):
         return 5
-        
+
+    def get_name(self):
+        return "soil ph"
+
+
 class S2_HumanPopulation_DataLoader(GeoDataLoader):
 
     @classmethod
@@ -638,6 +657,10 @@ class S2_HumanPopulation_DataLoader(GeoDataLoader):
 
         return class_weights
 
+    def get_name(self):
+        return "human pop"
+
+
 
 class S2_TreeCover_DataLoader(GeoDataLoader):
 
@@ -650,17 +673,24 @@ class S2_TreeCover_DataLoader(GeoDataLoader):
         return 5
     
     def get_default_class_weights(self):
-        if self.class_groups is None:
-            #class_weights = OrderedDict()
-            #class_weights[0] = 1
-            #class_weights[1] = 1
-            #class_weights[2] = 1
-            #class_weights[3] = 1
-            #class_weights[4] = .1
-            class_weights = OrderedDict()
-            class_weights[(0,1,2)] = 1
-            class_weights[(3,4)] = .01
-        else:
-            class_weights = super().get_default_class_weights()
+        class_weights = OrderedDict()
+        class_weights[0] = 1
+        class_weights[1] = 1
+        class_weights[2] = 1
+        class_weights[3] = 1
+        class_weights[4] = .01
+        
+        #class_weights = OrderedDict()
+        #class_weights[0] = 1
+        #class_weights[1] = 1
+        #class_weights[2] = 1
+        #class_weights[(3,4)] = .1
+        
+        #class_weights = OrderedDict()
+        #class_weights[(0,1,2)] = 1
+        #class_weights[(3,4)] = .01
 
         return class_weights
+
+    def get_name(self):
+        return "tree cover"
